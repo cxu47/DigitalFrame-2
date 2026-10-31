@@ -12,12 +12,22 @@ def _users(tmp_path, text):
     return path
 
 
-def test_load_users_rejects_a_missing_file(tmp_path):
+def test_passcode_environment_replaces_the_yaml_file(tmp_path, monkeypatch):
+    monkeypatch.setenv("PASSCODE", "from-the-environment")
+    users = load_users(tmp_path / "missing.yaml")
+    assert authenticate(users, "from-the-environment").name == "owner"
+    assert authenticate(users, "from-the-environment ") is None
+    assert "from-the-environment" not in repr(users["owner"])
+
+
+def test_load_users_rejects_a_missing_file(tmp_path, monkeypatch):
+    monkeypatch.delenv("PASSCODE", raising=False)
     with pytest.raises(ValueError, match="Missing users file"):
         load_users(tmp_path / "users.yaml")
 
 
-def test_load_users_rejects_blank_duplicate_and_non_text_passcodes(tmp_path):
+def test_load_users_rejects_blank_duplicate_and_non_text_passcodes(tmp_path, monkeypatch):
+    monkeypatch.delenv("PASSCODE", raising=False)
     with pytest.raises(ValueError, match="without a passcode"):
         load_users(_users(tmp_path, "users:\n  - name: ada\n    passcode:\n"))
     with pytest.raises(ValueError, match="more than once"):
@@ -30,7 +40,8 @@ users:
         load_users(_users(tmp_path, "users:\n  - {name: ada, passcode: 1234}\n"))
 
 
-def test_only_the_passcode_is_checked_and_it_is_not_trimmed(tmp_path):
+def test_only_the_passcode_is_checked_and_it_is_not_trimmed(tmp_path, monkeypatch):
+    monkeypatch.delenv("PASSCODE", raising=False)
     users = load_users(_users(tmp_path, """
 users:
   - name: ada
@@ -44,7 +55,8 @@ users:
     assert authenticate(users, "nope") is None
 
 
-def test_duplicate_passcodes_are_rejected(tmp_path):
+def test_duplicate_passcodes_are_rejected(tmp_path, monkeypatch):
+    monkeypatch.delenv("PASSCODE", raising=False)
     with pytest.raises(ValueError, match="same passcode"):
         load_users(_users(tmp_path, """
 users:

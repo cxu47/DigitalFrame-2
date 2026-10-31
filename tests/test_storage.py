@@ -23,7 +23,37 @@ def test_prefix_accepts_a_bucket_folder():
     assert normalize_prefix("photos/") == "photos/"
 
 
-def test_http_endpoint_is_rejected(tmp_path):
+def test_environment_oss_settings_are_used_instead_of_the_secrets_file(tmp_path, monkeypatch):
+    write_oss_env(tmp_path, endpoint="https://from-file.example.invalid")
+    (tmp_path / "secrets" / "oss.env").write_text(
+        "OSS_ACCESS_KEY_ID=file-id\n"
+        "OSS_ACCESS_KEY_SECRET=file-secret\n"
+        "OSS_BUCKET_NAME=file-bucket\n"
+        "OSS_REGION=cn-hangzhou\n"
+        "OSS_ENDPOINT=https://from-file.example.invalid\n"
+        "OSS_PREFIX=photos/\n",
+        encoding="utf-8",
+    )
+    for name, value in {
+        "OSS_ACCESS_KEY_ID": "env-id",
+        "OSS_ACCESS_KEY_SECRET": "env-secret",
+        "OSS_BUCKET_NAME": "env-bucket",
+        "OSS_REGION": "cn-hongkong",
+        "OSS_ENDPOINT": "https://oss-cn-hongkong-internal.aliyuncs.com",
+        "OSS_PREFIX": "photos",
+    }.items():
+        monkeypatch.setenv(name, value)
+    config = load_oss_config(make_settings(tmp_path))
+    assert config.access_key_id == "env-id"
+    assert config.access_key_secret == "env-secret"
+    assert config.bucket == "env-bucket"
+    assert config.region == "cn-hongkong"
+    assert config.endpoint == "https://oss-cn-hongkong-internal.aliyuncs.com"
+    assert config.prefix == "photos/"
+
+
+def test_http_endpoint_is_rejected(tmp_path, monkeypatch):
+    monkeypatch.delenv("OSS_ACCESS_KEY_ID", raising=False)
     write_oss_env(tmp_path, endpoint="http://oss.example.invalid")
     settings = make_settings(tmp_path)
 
@@ -31,7 +61,8 @@ def test_http_endpoint_is_rejected(tmp_path):
         load_oss_config(settings)
 
 
-def test_missing_secret_does_not_echo_the_other_values_or_export_them(tmp_path):
+def test_missing_secret_does_not_echo_the_other_values_or_export_them(tmp_path, monkeypatch):
+    monkeypatch.delenv("OSS_ACCESS_KEY_ID", raising=False)
     write_oss_env(tmp_path, secret="")
     settings = make_settings(tmp_path)
     before = os.environ.get("OSS_ACCESS_KEY_ID")

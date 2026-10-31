@@ -36,19 +36,28 @@ Replace `BUCKET_NAME`. The policy grants neither `PutObject` nor `DeleteObject`.
 
 Push the `digitalframe-2` image to a container registry in `cn-hongkong`.
 
-## 4. Function
+## 4. Environment variables
 
-Create an HTTP function from that image. Function Compute calls port `9000`. Set:
+Create an HTTP function from that image. Function Compute calls port `9000`. Do not put `secrets/oss.env` or `users.yaml` in the image or on a disk. A file mount needs a NAS volume, which bills every month, so this setup uses one passcode variable instead of a user file.
 
-```text
-HOST=0.0.0.0
-PORT=9000
-COOKIE_SECURE=true
-BACKGROUND_SYNC=false
-SESSION_KEY=<64 hex characters>
-```
+In the Function Compute console, open the function, then **Configuration**, then **Environment variables**. Add each row below. Use the console's secret option for the key, the secret, the session key, and the passcode when it is offered. Do not add spaces around the passcode. The value is compared exactly.
 
-Create the key with `python -c "import secrets; print(secrets.token_hex(32))"`. Put the OSS settings in the function environment as well: `OSS_ACCESS_KEY_ID`, `OSS_ACCESS_KEY_SECRET`, `OSS_BUCKET_NAME`, `OSS_REGION=cn-hongkong`, and `OSS_ENDPOINT=https://oss-cn-hongkong-internal.aliyuncs.com`. Mount `users.yaml` where the process expects `USERS_FILE`, or set the passcode file contents through the platform's file facility. Do not bake secrets into the image.
+| Name | Value |
+| --- | --- |
+| `HOST` | `0.0.0.0` |
+| `PORT` | `9000` |
+| `COOKIE_SECURE` | `true` |
+| `BACKGROUND_SYNC` | `false` |
+| `OSS_ACCESS_KEY_ID` | the RAM user's id |
+| `OSS_ACCESS_KEY_SECRET` | the RAM user's secret |
+| `OSS_BUCKET_NAME` | the existing bucket |
+| `OSS_REGION` | `cn-hongkong` |
+| `OSS_ENDPOINT` | `https://oss-cn-hongkong-internal.aliyuncs.com` |
+| `OSS_PREFIX` | `photos` |
+| `SESSION_KEY` | 64 hex characters from `python -c "import secrets; print(secrets.token_hex(32))"` |
+| `PASSCODE` | the one passcode people type on the login page |
+
+When `OSS_ACCESS_KEY_ID` is present, the process does not read `secrets/oss.env`. When `PASSCODE` is present, it does not read `users.yaml`. Local runs leave both unset and keep using those files. The names in `users.yaml` are not used here.
 
 ## 5. Capacity
 

@@ -74,7 +74,7 @@ Add `deploy/function-compute.md`. Do not create the function in this phase's exi
 1. Keep the bucket private and in `cn-hongkong`.
 2. Keep the RAM policy as list and get on `photos/*` only. Do not use the account root key.
 3. Push `digitalframe-2` to a container registry in `cn-hongkong`.
-4. Create an HTTP function from that image. Listen on port `9000`, which Function Compute expects. Set `HOST=0.0.0.0`, `PORT=9000`, `COOKIE_SECURE=true`, and `SESSION_KEY`.
+4. Create an HTTP function from that image. Listen on port `9000`. The process reads configuration from the function environment, not from `secrets/oss.env` or `users.yaml`. Set `HOST=0.0.0.0`, `PORT=9000`, `COOKIE_SECURE=true`, `BACKGROUND_SYNC=false`, `SESSION_KEY`, `PASSCODE`, and the `OSS_*` variables.
 5. Memory around 2 GB so one full-resolution HEIC can be converted in memory. Raise the request timeout enough for that conversion. Minimum instances: 0. No provisioned instances. No NAS. No derivative prefix.
 6. Attach a domain and HTTPS. A bare IP is not the target. Do not open the function by handing out OSS links.
 7. Confirm a cold visit shows the login page, a passcode plays a photo loaded from OSS, and a HEIC plays without a file being written back.

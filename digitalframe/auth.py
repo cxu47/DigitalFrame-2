@@ -40,7 +40,14 @@ class Session:
 
 
 def load_users(path):
-    """Read the gitignored user file. The error text never includes a passcode."""
+    """Read passcodes from PASSCODE, or from the YAML file when that variable is unset.
+
+    PASSCODE is one shared passcode. The YAML names are labels and are not checked.
+    The error text never includes a passcode.
+    """
+    passcode = os.environ.get("PASSCODE")
+    if passcode:
+        return {"owner": User("owner", passcode)}
     path = Path(path)
     if not path.is_file():
         raise ValueError(f"Missing users file: {path.name}")

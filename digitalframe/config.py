@@ -88,14 +88,25 @@ def load_settings(root=None):
 
 
 def load_oss_config(settings):
-    path = settings.secrets_dir / settings.oss_credentials_file
-    values = dotenv_values(path)
+    """Read OSS settings from the process environment, or from the secrets file.
+
+    Function Compute injects the variables into the process. When
+    OSS_ACCESS_KEY_ID is set there, the secrets file is not read.
+    """
+    if os.environ.get("OSS_ACCESS_KEY_ID", "").strip():
+        values = {name: os.environ.get(name, "") for name in (
+            "OSS_ACCESS_KEY_ID", "OSS_ACCESS_KEY_SECRET", "OSS_BUCKET_NAME",
+            "OSS_REGION", "OSS_ENDPOINT", "OSS_PREFIX", "OSS_SESSION_TOKEN")}
+        source = "the function environment"
+    else:
+        path = settings.secrets_dir / settings.oss_credentials_file
+        values = dotenv_values(path)
+        source = path.name
 
     def required(name):
         value = values.get(name)
         if not isinstance(value, str) or not value.strip():
-            raise ValueError(
-                f"Missing required OSS setting: {name}. Add it to {path.name}.")
+            raise ValueError(f"Missing required OSS setting: {name}. Set it in {source}.")
         return value.strip()
 
     endpoint = str(values.get("OSS_ENDPOINT") or "").strip() or None
