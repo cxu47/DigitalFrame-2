@@ -91,7 +91,7 @@ def create_app(settings, library, users, sessions, limiter, session_key):
         session, denial = require(request)
         if denial is not None:
             return denial
-        played = library.media(token, session_key)
+        played = library.media(token, session_key, session)
         if played is None:
             return Response(status_code=404)
         body, media_type = played

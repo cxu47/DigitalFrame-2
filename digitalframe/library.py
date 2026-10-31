@@ -2,6 +2,7 @@
 
 import logging
 import time
+from concurrent.futures import ThreadPoolExecutor
 from threading import Lock
 
 from .auth import open_seal, seal
@@ -19,23 +20,126 @@ CONTENT_TYPES = {
     ".heic": "image/jpeg",
     ".heif": "image/jpeg",
 }
+QUEUE_LIMIT = 32
+QUEUE_WORKERS = 4
+
+
+class PhotoQueue:
+    """Compressed photos for one folder or month selection, read concurrently."""
+
+    def __init__(self, limit, workers):
+        self.limit = limit
+        self._workers = workers
+        self._pool = None
+        self._lock = Lock()
+        self._selection = None
+        self._generation = 0
+        self._kept = set()
+        self._ready = {}
+        self._futures = {}
+        self._running = set()
+
+    def prepare(self, selection, keys, read):
+        """Keep `keys` for this selection. A different selection drops the previous queue."""
+        wanted = list(dict.fromkeys(keys))[: self.limit]
+        started = []
+        with self._lock:
+            if selection != self._selection:
+                self._generation += 1
+                self._selection = selection
+                self._ready.clear()
+                self._futures.clear()
+            self._kept = set(wanted)
+            for key in list(self._ready):
+                if key not in self._kept:
+                    del self._ready[key]
+            for key in list(self._futures):
+                if key not in self._kept:
+                    del self._futures[key]
+            generation = self._generation
+            missing = [key for key in wanted if key not in self._ready and key not in self._futures]
+            for key in missing:
+                slot = []
+                future = self._executor().submit(self._finish, generation, key, read, slot)
+                slot.append(future)
+                self._futures[key] = future
+                self._running.add(future)
+                started.append(future)
+        for future in started:
+            future.add_done_callback(self._finished)
+
+    def get(self, key):
+        """Return a queued photo, waiting for a read that is already running."""
+        with self._lock:
+            played = self._ready.get(key)
+            future = None if played is not None else self._futures.get(key)
+        if played is not None:
+            return played
+        if future is None:
+            return None
+        try:
+            future.result()
+        except Exception:
+            logger.exception("Queued photo read failed")
+            return None
+        with self._lock:
+            return self._ready.get(key)
+
+    def wait(self, timeout=2):
+        deadline = time.monotonic() + timeout
+        while True:
+            with self._lock:
+                pending = list(self._running)
+            if not pending:
+                return
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("photo queue did not finish")
+            for future in pending:
+                future.result(remaining)
+
+    def _finished(self, future):
+        with self._lock:
+            self._running.discard(future)
+
+    def _executor(self):
+        if self._pool is None:
+            self._pool = ThreadPoolExecutor(max_workers=self._workers, thread_name_prefix="photo-queue")
+        return self._pool
+
+    def _finish(self, generation, key, read, slot):
+        try:
+            played = read(key)
+        except Exception:
+            logger.exception("Queued photo could not be read")
+            played = None
+        with self._lock:
+            if slot and self._futures.get(key) is slot[0]:
+                self._futures.pop(key, None)
+            if generation != self._generation or played is None or key not in self._kept:
+                return None
+            self._ready[key] = played
+            return played
 
 
 class Library:
     """One shared catalog. Each browser receives sealed ids, not object keys."""
 
-    def __init__(self, storage, *, interval, jpeg_quality=75, clock=None, lister=list_albums):
+    def __init__(self, storage, *, interval, jpeg_quality=75, clock=None, lister=list_albums,
+                 reader=read_photo, queue_limit=QUEUE_LIMIT, queue_workers=QUEUE_WORKERS):
         self.storage = storage
         self.interval = interval
         self.jpeg_quality = jpeg_quality
         self._clock = clock or time.monotonic
         self._lister = lister
+        self._reader = reader
         self.sync_problem = False
         self._lock = Lock()
         self._records = []
         self._names = {}
         self._albums = {}
         self._listed = None
+        self._queue = PhotoQueue(queue_limit, queue_workers)
 
     def ensure(self):
         """List when the catalog is missing or stale. Wait if a list is running."""
@@ -58,10 +162,8 @@ class Library:
     def catalog(self, session, key):
         self.ensure()
         records = sort_photos(self._records)
-        if session.mode == "months":
-            selected = filter_photos(records, months=session.months)
-        else:
-            selected = filter_photos(records, folder=session.folder)
+        selected = self._selected(session, records)
+        self._warm(session, selected)
         return {
             "mode": session.mode,
             "folder": session.folder,
@@ -74,13 +176,33 @@ class Library:
                        for record in selected],
         }
 
-    def media(self, token, key):
+    def media(self, token, key, session):
         self.ensure()
         object_key = open_seal(key, token)
         if object_key is None or object_key not in self._names:
             return None
-        data = read_photo(self.storage, object_key)
-        name = self._names[object_key]
+        self._warm(session)
+        cached = self._queue.get(object_key)
+        if cached is not None:
+            return cached
+        return self._bytes_for(object_key)
+
+    def _selected(self, session, records=None):
+        records = sort_photos(self._records if records is None else records)
+        if session.mode == "months":
+            return filter_photos(records, months=session.months)
+        return filter_photos(records, folder=session.folder)
+
+    def _warm(self, session, selected=None):
+        if selected is None:
+            selected = self._selected(session)
+        self._queue.prepare(_selection_key(session), [record.id for record in selected], self._bytes_for)
+
+    def _bytes_for(self, object_key):
+        name = self._names.get(object_key)
+        if name is None:
+            return None
+        data = self._reader(self.storage, object_key)
         suffix = "." + name.lower().rsplit(".", 1)[-1] if "." in name else ""
         if suffix in {".heic", ".heif"}:
             return jpeg_from_heic(data, quality=self.jpeg_quality), "image/jpeg"
@@ -98,6 +220,12 @@ class Library:
             for object_id, entry in catalog["photos"].items()
             if isinstance(entry, dict) and isinstance(entry.get("source_name"), str)
         }
+
+
+def _selection_key(session):
+    if session.mode == "months":
+        return ("months", tuple(sorted(session.months)))
+    return ("folder", session.folder or "")
 
 
 def _albums(records, extra):

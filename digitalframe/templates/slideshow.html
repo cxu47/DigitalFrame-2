@@ -184,6 +184,10 @@
       let timer = null;
       let drawing = false;
       let controlKey = "";
+      let queueEpoch = 0;
+      const queueAhead = 4;
+      const queueFetches = 2;
+      let ready = new Map();
 
       function focused() {
         return document.visibilityState === "visible" && document.hasFocus();
@@ -247,32 +251,134 @@
           bitmap, (width - drawnWidth) / 2, (height - drawnHeight) / 2, drawnWidth, drawnHeight);
       }
 
+      function dropQueue() {
+        queueEpoch += 1;
+        ready.forEach((entry) => {
+          if (entry.bitmap) entry.bitmap.close();
+        });
+        ready = new Map();
+      }
+
+      function queueIds() {
+        if (!photos.length) return [];
+        const ids = [];
+        const start = position < 0 ? 0 : position;
+        const count = Math.min(photos.length, queueAhead + 1);
+        for (let step = 0; step < count; step += 1) {
+          ids.push(photos[(start + step) % photos.length].id);
+        }
+        if (position >= 0 && photos.length > 1) {
+          ids.push(photos[(position - 1 + photos.length) % photos.length].id);
+        }
+        return ids;
+      }
+
+      function rememberBitmap(entry, bitmap) {
+        if (!bitmap) return null;
+        if (!ready.has(entry.id) || ready.get(entry.id) !== entry) {
+          bitmap.close();
+          return null;
+        }
+        entry.bitmap = bitmap;
+        return bitmap;
+      }
+
+      function loadEntry(id, epoch) {
+        const entry = { id: id, blob: null, bitmap: null, promise: null, decoding: null, settled: false };
+        entry.promise = fetch("/media/" + encodeURIComponent(id), { credentials: "same-origin" })
+          .then((response) => {
+            if (response.status === 401) {
+              location.assign("/");
+              return null;
+            }
+            if (!response.ok) return null;
+            return response.blob();
+          })
+          .then((blob) => {
+            if (epoch !== queueEpoch || !ready.has(id) || ready.get(id) !== entry) return null;
+            entry.settled = true;
+            entry.blob = blob;
+            fillQueue();
+            return blob;
+          })
+          .catch(() => {
+            entry.settled = true;
+            fillQueue();
+            return null;
+          });
+        ready.set(id, entry);
+        return entry;
+      }
+
+      function decodeEntry(entry) {
+        if (!entry || entry.bitmap) return Promise.resolve(entry ? entry.bitmap : null);
+        if (entry.decoding) return entry.decoding;
+        if (!entry.blob) return Promise.resolve(null);
+        entry.decoding = createImageBitmap(entry.blob).then((bitmap) => {
+          entry.decoding = null;
+          return rememberBitmap(entry, bitmap);
+        }).catch(() => {
+          entry.decoding = null;
+          return null;
+        });
+        return entry.decoding;
+      }
+
+      function fillQueue() {
+        if (!focused()) return;
+        const epoch = queueEpoch;
+        const wanted = new Set(queueIds());
+        ready.forEach((entry, id) => {
+          if (wanted.has(id)) return;
+          if (entry.bitmap) entry.bitmap.close();
+          ready.delete(id);
+        });
+        let loading = 0;
+        ready.forEach((entry) => {
+          if (!entry.blob && !entry.settled) loading += 1;
+        });
+        queueIds().forEach((id) => {
+          if (ready.has(id) || loading >= queueFetches) return;
+          loadEntry(id, epoch);
+          loading += 1;
+        });
+        if (!photos.length) return;
+        const next = position < 0 ? photos[0] : photos[(position + 1) % photos.length];
+        const upcoming = next && ready.get(next.id);
+        if (upcoming && upcoming.blob) decodeEntry(upcoming);
+      }
+
+      async function bitmapFor(id) {
+        let entry = ready.get(id);
+        if (!entry) {
+          fillQueue();
+          entry = ready.get(id);
+        }
+        if (!entry) return null;
+        if (!entry.blob && entry.promise) await entry.promise;
+        if (!ready.has(id) || ready.get(id) !== entry) return null;
+        return decodeEntry(entry);
+      }
+
       async function show(id) {
+        const epoch = queueEpoch;
         drawing = true;
-        let url = "";
         try {
-          const response = await fetch("/media/" + encodeURIComponent(id), { credentials: "same-origin" });
-          if (!response.ok || !focused()) {
+          fillQueue();
+          const bitmap = await bitmapFor(id);
+          if (epoch !== queueEpoch || !bitmap || !focused()) {
             if (!focused()) blackout(true);
             return false;
           }
-          const blob = await response.blob();
-          url = URL.createObjectURL(blob);
-          const bitmap = await createImageBitmap(blob);
-          if (!focused()) {
-            bitmap.close();
-            blackout(true);
-            return false;
-          }
           fit(bitmap);
-          bitmap.close();
           waiting.hidden = true;
           currentId = id;
           shown.add(id);
+          fillQueue();
           return true;
         } finally {
-          if (url) URL.revokeObjectURL(url);
           drawing = false;
+          if (epoch !== queueEpoch && currentId === null && focused() && !paused && photos.length) go(1);
         }
       }
 
@@ -417,10 +523,12 @@
           stopTimer();
           clearFrame();
           rebuildOrder();
+          dropQueue();
           if (!photos.length) {
             waiting.hidden = false;
           } else if (focused()) {
-            go(1);
+            fillQueue();
+            if (!drawing) go(1);
           }
           return;
         }
@@ -430,9 +538,13 @@
           position = -1;
           stopTimer();
           clearFrame();
+          dropQueue();
           waiting.hidden = false;
         } else if (focused() && !paused && !timer && !drawing && currentId === null) {
+          fillQueue();
           go(1);
+        } else if (focused() && currentId) {
+          fillQueue();
         }
       }
 
@@ -451,6 +563,7 @@
         button.setAttribute("aria-pressed", shuffle ? "true" : "false");
         button.textContent = text(shuffle ? "shuffleOn" : "shuffleOff");
         rebuildOrder();
+        fillQueue();
         if (!paused && focused() && currentId) schedule();
       });
 
