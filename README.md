@@ -19,7 +19,7 @@ JPEG, PNG, and WebP play as themselves. HEIC and HEIF are converted once to JPEG
 
 ## Status
 
-Phases 1 through 3 are in this checkout. `digitalframe serve` is the slideshow. Deployment is the remaining plan, under [`.plans/`](.plans/00-sequence.md).
+Phases 1 through 4 are in this checkout. `digitalframe serve` is the slideshow. Phase 4 is the always-on Hong Kong virtual machine. Phase 5 is the plan for waking Function Compute on a visit instead. Both deployment plans are under [`.plans/`](.plans/00-sequence.md).
 
 | Phase | Plan | Result |
 | --- | --- | --- |
@@ -27,6 +27,7 @@ Phases 1 through 3 are in this checkout. `digitalframe serve` is the slideshow. 
 | 2 | [Sync library](.plans/02-sync-library.md) | Cache filled from OSS, tested without the network |
 | 3 | [Slideshow site](.plans/03-slideshow-site.md) | Login, canvas playback, focus blackout |
 | 4 | [Hong Kong host](.plans/04-hong-kong-host.md) | Same process on ECS in `cn-hongkong` |
+| 5 | [Function Compute](.plans/05-function-compute.md) | Planned. Wake on visit, no idle virtual machine |
 
 Do not start a phase until the previous phase's exit check is true.
 
