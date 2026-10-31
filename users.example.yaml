@@ -1,0 +1,7 @@
+# Copy to users.yaml and replace the passcodes. users.yaml is gitignored.
+# Each person has a name and a passcode. Comparison is exact.
+# Use at least 6 characters. The app does not create accounts by itself.
+
+users:
+  - name: chang
+    passcode: "replace-me"
