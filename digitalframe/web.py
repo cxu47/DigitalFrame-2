@@ -54,7 +54,8 @@ def create_app(settings, library, users, sessions, limiter, session_key):
     def translations():
         return Response(TRANSLATIONS.read_bytes(), media_type="application/json")
 
-    @app.get("/", response_class=HTMLResponse)
+    @app.get("/")
+    @app.get("/login")
     def home(request: Request):
         session = current(request)
         if session is None:
@@ -74,8 +75,8 @@ def create_app(settings, library, users, sessions, limiter, session_key):
                 _render(page, signed_in=False, error_code="passcode"), status_code=401)
         limiter.succeed(address)
         token = sessions.start(session_key, user.name, settings.display_seconds)
-        response = RedirectResponse("/", status_code=303)
-        _set_session_cookie(response, token, settings, sessions)
+        response = HTMLResponse(_render(page, signed_in=True))
+        _set_session_cookie(response, token, request, settings, sessions)
         return response
 
     @app.get("/catalog")
@@ -106,8 +107,8 @@ def create_app(settings, library, users, sessions, limiter, session_key):
             months=(), display_seconds=settings.display_seconds)
         if token is None:
             return JSONResponse({"detail": "Sign in."}, status_code=401)
-        response = RedirectResponse("/", status_code=303)
-        _set_session_cookie(response, token, settings, sessions)
+        response = HTMLResponse(_render(page, signed_in=True))
+        _set_session_cookie(response, token, request, settings, sessions)
         return response
 
     @app.post("/view")
@@ -141,17 +142,25 @@ def create_app(settings, library, users, sessions, limiter, session_key):
             updated = sessions.update(session_key, token, mode="folder", folder=album or None)
         if updated is None:
             return JSONResponse({"detail": "Sign in."}, status_code=401)
-        response = RedirectResponse("/", status_code=303)
-        _set_session_cookie(response, updated, settings, sessions)
+        response = HTMLResponse(_render(page, signed_in=True))
+        _set_session_cookie(response, updated, request, settings, sessions)
         return response
 
     return app
 
 
-def _set_session_cookie(response, token, settings, sessions):
+def _set_session_cookie(response, token, request, settings, sessions):
     response.set_cookie(
-        COOKIE_NAME, token, httponly=True, samesite="strict", path="/",
-        secure=settings.cookie_secure, max_age=sessions.ttl)
+        COOKIE_NAME, token, httponly=True, samesite="lax", path="/",
+        secure=_browser_is_https(request), max_age=sessions.ttl)
+
+
+def _browser_is_https(request):
+    """Use the scheme the browser used, not an internal HTTP hop."""
+    forwarded = (request.headers.get("x-forwarded-proto") or "").split(",")[0].strip().lower()
+    if forwarded in {"https", "http"}:
+        return forwarded == "https"
+    return request.url.scheme == "https"
 
 
 def run_sync(library):

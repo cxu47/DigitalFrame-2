@@ -78,8 +78,9 @@ def test_a_correct_passcode_sets_a_cookie_and_media_requires_it(tmp_path):
 
     client = TestClient(app)
     signed_in = _login(client)
-    assert signed_in.status_code == 303
+    assert signed_in.status_code == 200
     assert "digitalframe_session" in signed_in.cookies
+    assert 'id="playback" hidden' not in signed_in.text
     assert client.get("/media/missing").status_code == 404
 
 
@@ -165,7 +166,7 @@ def test_invalid_display_seconds_do_not_change_the_session(tmp_path):
     assert client.get("/catalog").json()["display_seconds"] == 5
     accepted = client.post("/view", data={"apply": "seconds", "display_seconds": "8"},
                             follow_redirects=False)
-    assert accepted.status_code == 303
+    assert accepted.status_code == 200
     assert client.get("/catalog").json()["display_seconds"] == 8
 
 
@@ -176,7 +177,7 @@ def test_folder_selection_narrows_the_catalog(tmp_path):
     assert len(client.get("/catalog").json()["photos"]) == 2
     response = client.post("/view", data={"apply": "folder", "folder": "holidays"},
                             follow_redirects=False)
-    assert response.status_code == 303
+    assert response.status_code == 200
     catalog = client.get("/catalog").json()
     assert catalog["mode"] == "folder"
     assert catalog["folder"] == "holidays"
@@ -184,12 +185,12 @@ def test_folder_selection_narrows_the_catalog(tmp_path):
     assert catalog["photos"][0]["modified"].startswith("2024-01-02")
     months = client.post("/view", data={"apply": "months", "months": "2026-09"},
                           follow_redirects=False)
-    assert months.status_code == 303
+    assert months.status_code == 200
     by_month = client.get("/catalog").json()
     assert by_month["mode"] == "months"
     assert by_month["photos"][0]["modified"].startswith("2026-09-12")
     reset = client.post("/reset", follow_redirects=False)
-    assert reset.status_code == 303
+    assert reset.status_code == 200
     restored = client.get("/catalog").json()
     assert restored["mode"] == "folder"
     assert restored["folder"] is None
