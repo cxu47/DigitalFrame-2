@@ -1,7 +1,7 @@
 # Phase 2 — Sync library
 
 Date: 2026-10-30  
-Status: not started.  
+Status: done. `uv run --no-sync python -m pytest -q` passes. A live sync against the Hong Kong bucket is still a manual check.  
 Requires: [01-repository.md](01-repository.md) exit check.  
 Next: [03-slideshow-site.md](03-slideshow-site.md)
 
