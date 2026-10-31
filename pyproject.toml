@@ -10,10 +10,14 @@ readme = "README.md"
 requires-python = ">=3.12,<3.15"
 dependencies = [
     "alibabacloud-oss-v2==1.4.0",
+    "fastapi==0.141.1",
     "pillow==12.3.0",
     "pillow-heif==1.4.0",
     "python-dotenv==1.2.3",
+    "python-multipart==0.0.32",
+    "pyyaml==6.0.3",
     "typer==0.27.2",
+    "uvicorn==0.52.4",
 ]
 
 [project.scripts]
@@ -22,10 +26,14 @@ digitalframe = "digitalframe.cli:main"
 [tool.setuptools]
 packages = ["digitalframe"]
 
+[tool.setuptools.package-data]
+digitalframe = ["templates/*.html"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
 [dependency-groups]
 dev = [
+    "httpx2==2.13.0",
     "pytest==9.1.1",
 ]

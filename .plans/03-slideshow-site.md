@@ -1,7 +1,7 @@
 # Phase 3 — Slideshow site
 
 Date: 2026-10-30  
-Status: not started.  
+Status: done. `uv run --no-sync python -m pytest -q` passes. A localhost browser check covered a rejected passcode, canvas playback, the right-click shield, and the blackout when the page is not focused.  
 Requires: [02-sync-library.md](02-sync-library.md) exit check.  
 Next: [04-hong-kong-host.md](04-hong-kong-host.md)
 

@@ -19,7 +19,7 @@ JPEG, PNG, and WebP play as themselves. HEIC and HEIF are converted once to JPEG
 
 ## Status
 
-Phases 1 and 2 are in this checkout. `digitalframe sync` fills the cache. There is no website yet. The remaining work is written down, in order, under [`.plans/`](.plans/00-sequence.md).
+Phases 1 through 3 are in this checkout. `digitalframe serve` is the slideshow. Deployment is the remaining plan, under [`.plans/`](.plans/00-sequence.md).
 
 | Phase | Plan | Result |
 | --- | --- | --- |
@@ -41,7 +41,7 @@ cp -n secrets/oss.env.example secrets/oss.env
 cp -n users.example.yaml users.yaml
 ```
 
-Edit `secrets/oss.env` and `users.yaml` on the machine that runs the app. Neither file is committed. `users.yaml` is unused until phase 3.
+Edit `secrets/oss.env` and `users.yaml` on the machine that runs the app. Neither file is committed. Quote each passcode in `users.yaml` so it stays text.
 
 Sync once the OSS file points at the Hong Kong bucket:
 
@@ -50,6 +50,14 @@ uv run --no-sync digitalframe sync
 ```
 
 The command lists `photos/<album>/<file>`, downloads into `cache/`, and writes `cache/.photos.json` only after a pass that had no failures. A failed download leaves the previous cache in place.
+
+Open the site on this machine:
+
+```bash
+uv run --no-sync digitalframe serve
+```
+
+That listens on `127.0.0.1:8000` unless `.env` says otherwise. A name and passcode from `users.yaml` open the slideshow. The page is black while the window is in the background. Photos are drawn on a canvas, so the usual Save image action is not offered.
 
 Automated checks use a fake OSS client:
 

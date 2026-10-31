@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DigitalFrame</title>
+  <style>
+    html, body { margin: 0; background: #000; color: #eee; font: 16px sans-serif; }
+    body.login #stage, body.login #controls { display: none; }
+    body.slideshow #login { display: none; }
+    #login { max-width: 22rem; margin: 18vh auto; padding: 0 1rem; }
+    label { display: block; margin: 0.8rem 0 0.2rem; }
+    input, select, button { font: inherit; }
+    .error { color: #f66; min-height: 1.2rem; }
+    #stage { position: relative; height: calc(100vh - 8rem); background: #000; }
+    canvas { width: 100%; height: 100%; background: #000; }
+    #shield { position: absolute; inset: 0; }
+    #waiting, #problem { position: absolute; top: 1rem; left: 1rem; margin: 0; }
+    #problem { color: #f66; top: 3rem; }
+    #veil { position: fixed; inset: 0; background: #000; z-index: 10; }
+    #controls { display: flex; gap: 1.5rem; flex-wrap: wrap; padding: 0.75rem 1rem; }
+    #stage, #shield, canvas {
+      user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
+    }
+    #mode-label { align-self: end; }
+  </style>
+</head>
+<body class="{{BODY_CLASS}}">
+  <form id="login" method="post" action="/login" {{LOGIN_ATTR}}>
+    <h1>DigitalFrame</h1>
+    <label for="name">Name</label>
+    <input id="name" name="name" autocomplete="username" required>
+    <label for="passcode">Passcode</label>
+    <input id="passcode" name="passcode" type="password" autocomplete="current-password" required>
+    <p class="error">{{ERROR}}</p>
+    <button type="submit">Enter</button>
+  </form>
+
+  <div id="stage" {{APP_ATTR}}>
+    <canvas id="frame" width="800" height="450"></canvas>
+    <div id="shield"></div>
+    <p id="waiting">Waiting for photos</p>
+    <p id="problem" hidden>Cannot reach the photo library</p>
+    <div id="veil" hidden></div>
+  </div>
+
+  <div id="controls" {{APP_ATTR}}>
+    <form method="post" action="/view">
+      <input type="hidden" name="action" value="folder">
+      <label for="folder">Photo folder</label>
+      <select id="folder" name="folder"></select>
+      <button type="submit">Apply folder</button>
+    </form>
+    <form method="post" action="/view">
+      <input type="hidden" name="action" value="months">
+      <div id="months"></div>
+      <button type="submit">Apply months</button>
+    </form>
+    <form method="post" action="/view">
+      <input type="hidden" name="action" value="seconds">
+      <label for="seconds">Seconds per photo</label>
+      <input id="seconds" name="display_seconds" inputmode="numeric" value="5">
+      <button type="submit">Apply</button>
+    </form>
+    <p id="mode-label">Active: Folder</p>
+    <p id="view-error" class="error">{{ERROR}}</p>
+    <form method="post" action="/logout">
+      <button type="submit">Log out</button>
+    </form>
+  </div>
+  <script>
+    const body = document.body;
+    if (body.classList.contains("slideshow")) {
+      const stage = document.getElementById("stage");
+      const canvas = document.getElementById("frame");
+      const shield = document.getElementById("shield");
+      const veil = document.getElementById("veil");
+      const waiting = document.getElementById("waiting");
+      const problem = document.getElementById("problem");
+      const viewError = document.getElementById("view-error");
+      let photos = [];
+      let upcoming = [];
+      let index = 0;
+      let shown = new Set();
+      let haveCatalog = false;
+      let currentId = null;
+      let displaySeconds = 5;
+      let timer = null;
+      let drawing = false;
+      let controlKey = "";
+
+      function focused() {
+        return document.visibilityState === "visible" && document.hasFocus();
+      }
+
+      function clearFrame() {
+        canvas.width = canvas.width;
+      }
+
+      function stopTimer() {
+        clearTimeout(timer);
+        timer = null;
+      }
+
+      function blackout(on) {
+        veil.hidden = !on;
+        if (on) {
+          stopTimer();
+          clearFrame();
+        }
+      }
+
+      function focusChanged() {
+        if (!focused()) {
+          blackout(true);
+          return;
+        }
+        veil.hidden = true;
+        if (currentId) {
+          show(currentId);
+        } else {
+          advance();
+        }
+      }
+
+      shield.addEventListener("contextmenu", (event) => event.preventDefault());
+      shield.addEventListener("dragstart", (event) => event.preventDefault());
+      shield.addEventListener("drop", (event) => event.preventDefault());
+      stage.addEventListener("contextmenu", (event) => event.preventDefault());
+      document.addEventListener("visibilitychange", focusChanged);
+      window.addEventListener("blur", focusChanged);
+      window.addEventListener("focus", focusChanged);
+
+      function fit(bitmap) {
+        const rect = stage.getBoundingClientRect();
+        canvas.width = Math.max(1, Math.floor(rect.width));
+        canvas.height = Math.max(1, Math.floor(rect.height));
+        const scale = Math.min(canvas.width / bitmap.width, canvas.height / bitmap.height);
+        const width = bitmap.width * scale;
+        const height = bitmap.height * scale;
+        const context = canvas.getContext("2d");
+        context.fillStyle = "#000";
+        context.fillRect(0, 0, canvas.width, canvas.height);
+        context.drawImage(bitmap, (canvas.width - width) / 2, (canvas.height - height) / 2, width, height);
+      }
+
+      async function show(id) {
+        drawing = true;
+        const response = await fetch("/media/" + encodeURIComponent(id), { credentials: "same-origin" });
+        if (!response.ok || !focused()) {
+          drawing = false;
+          if (!focused()) blackout(true);
+          return;
+        }
+        const blob = await response.blob();
+        const url = URL.createObjectURL(blob);
+        try {
+          const bitmap = await createImageBitmap(blob);
+          if (!focused()) {
+            bitmap.close();
+            blackout(true);
+            return;
+          }
+          fit(bitmap);
+          bitmap.close();
+          waiting.hidden = true;
+          currentId = id;
+          shown.add(id);
+        } finally {
+          URL.revokeObjectURL(url);
+          drawing = false;
+        }
+      }
+
+      function nextId() {
+        if (upcoming.length) return upcoming.shift().id;
+        if (!photos.length) return null;
+        const photo = photos[index % photos.length];
+        index += 1;
+        return photo.id;
+      }
+
+      function schedule() {
+        stopTimer();
+        timer = setTimeout(advance, displaySeconds * 1000);
+      }
+
+      async function advance() {
+        if (!focused()) return;
+        const id = nextId();
+        if (!id) {
+          currentId = null;
+          waiting.hidden = false;
+          clearFrame();
+          return;
+        }
+        await show(id);
+        if (focused()) schedule();
+      }
+
+      function merge(incoming) {
+        if (!haveCatalog) {
+          photos = incoming;
+          haveCatalog = true;
+          return;
+        }
+        const known = new Set(photos.map((photo) => photo.id).concat(upcoming.map((photo) => photo.id)));
+        incoming.forEach((photo) => {
+          if (!shown.has(photo.id) && !known.has(photo.id)) upcoming.push(photo);
+        });
+        photos = incoming;
+      }
+
+      function renderControls(data) {
+        const key = JSON.stringify([data.albums, data.months, data.mode, data.folder, data.selected_months]);
+        document.getElementById("mode-label").textContent = data.mode === "months" ? "Active: Months" : "Active: Folder";
+        if (key === controlKey) return;
+        controlKey = key;
+        const folder = document.getElementById("folder");
+        folder.replaceChildren();
+        const all = document.createElement("option");
+        all.value = "";
+        all.textContent = "All";
+        all.selected = !data.folder;
+        folder.appendChild(all);
+        data.albums.forEach((album) => {
+          const option = document.createElement("option");
+          option.value = album.name;
+          option.textContent = album.name + " — " + album.count;
+          option.selected = album.name === data.folder;
+          folder.appendChild(option);
+        });
+        const months = document.getElementById("months");
+        months.replaceChildren();
+        data.months.forEach((entry) => {
+          const label = document.createElement("label");
+          const box = document.createElement("input");
+          box.type = "checkbox";
+          box.name = "months";
+          box.value = entry.month;
+          box.checked = data.selected_months.indexOf(entry.month) !== -1;
+          label.appendChild(box);
+          label.appendChild(document.createTextNode(" " + entry.month + " — " + entry.count));
+          months.appendChild(label);
+        });
+        document.getElementById("seconds").value = String(data.display_seconds);
+      }
+
+      async function refresh() {
+        const response = await fetch("/catalog", { credentials: "same-origin" });
+        if (response.status === 401) {
+          location.assign("/");
+          return;
+        }
+        const data = await response.json();
+        displaySeconds = data.display_seconds;
+        problem.hidden = !data.sync_problem;
+        merge(data.photos);
+        renderControls(data);
+        waiting.hidden = data.photos.length > 0 && (currentId !== null || drawing);
+        if (!data.photos.length) {
+          upcoming = [];
+          currentId = null;
+          stopTimer();
+          clearFrame();
+          waiting.hidden = false;
+        } else if (focused() && !timer && !drawing && currentId === null) {
+          advance();
+        }
+      }
+
+      document.querySelectorAll("#controls form[action='/view']").forEach((form) => {
+        form.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          const response = await fetch(form.action, {
+            method: "POST", body: new FormData(form), credentials: "same-origin", redirect: "follow",
+          });
+          if (response.status === 422) {
+            viewError.textContent = form.action.endsWith("/view") && form.querySelector("[name=action]").value === "seconds"
+              ? "Enter a positive whole number of seconds, such as 5."
+              : "That choice was not accepted.";
+            return;
+          }
+          viewError.textContent = "";
+          controlKey = "";
+          await refresh();
+        });
+      });
+
+      if (!focused()) blackout(true);
+      refresh();
+      setInterval(refresh, 5000);
+    }
+  </script>
+</body>
+</html>

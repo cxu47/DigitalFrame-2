@@ -1,7 +1,7 @@
 # DigitalFrame-2 sequence
 
 Date: 2026-10-30  
-Status: phases 1 and 2 are in the repository. Phases 3 and 4 are not started.
+Status: phases 1 through 3 are in the repository. Phase 4 is not started.
 
 ## Decision
 

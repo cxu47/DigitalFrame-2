@@ -8,6 +8,7 @@ from dataclasses import dataclass
 import math
 import os
 from pathlib import Path
+import re
 
 from dotenv import dotenv_values
 
@@ -29,6 +30,12 @@ class Settings:
     other_image_quality: int
     iphone_jpeg_quality: int
     log_level: str
+    host: str = "127.0.0.1"
+    port: int = 8000
+    cookie_secure: bool = False
+    users_file: str = "users.yaml"
+    display_seconds: int = 5
+    sync_interval: float = 30.0
 
     def processing_profile(self):
         return (
@@ -69,6 +76,12 @@ def load_settings(root=None):
         other_image_quality=_integer(get, "OTHER_IMAGE_QUALITY", 85, 1, 95),
         iphone_jpeg_quality=_integer(get, "IPHONE_JPEG_QUALITY", 75, 1, 95),
         log_level=get("LOG_LEVEL", "INFO"),
+        host=get("HOST", "127.0.0.1"),
+        port=_port(get),
+        cookie_secure=_bool(get, "COOKIE_SECURE", False),
+        users_file=_relative_dir(get, "USERS_FILE", "users.yaml").as_posix(),
+        display_seconds=_display_seconds(get),
+        sync_interval=_seconds(get, "SYNC_INTERVAL", "30"),
     )
 
 
@@ -133,13 +146,54 @@ def _integer(get, name, default, minimum, maximum):
     return value
 
 
+def _display_seconds(get):
+    try:
+        return parse_display_seconds(get("DISPLAY_SECONDS", "5"))
+    except ValueError:
+        raise ValueError("DISPLAY_SECONDS must be a positive integer.") from None
+
+
+def parse_display_seconds(value):
+    """Accept a positive whole number such as 5. Reject 5.0, zero, and blanks."""
+    if not isinstance(value, str) or not re.fullmatch(r"[0-9]+", value.strip()):
+        raise ValueError("Enter a positive whole number of seconds, such as 5.")
+    try:
+        seconds = int(value.strip(), 10)
+    except ValueError:
+        raise ValueError("Enter a positive whole number of seconds, such as 5.") from None
+    if seconds <= 0:
+        raise ValueError("Enter a positive whole number of seconds, such as 5.")
+    return seconds
+
+
 def _timeout(get):
-    raw = get("NETWORK_TIMEOUT", "10")
+    return _seconds(get, "NETWORK_TIMEOUT", "10")
+
+
+def _seconds(get, name, default):
+    raw = get(name, default)
     try:
         value = float(raw)
         if not math.isfinite(value) or value < 0.001:
             raise ValueError
     except (TypeError, ValueError):
         raise ValueError(
-            "NETWORK_TIMEOUT must be a finite number of at least 0.001 seconds.") from None
+            f"{name} must be a finite number of at least 0.001 seconds.") from None
     return value
+
+
+def _port(get):
+    try:
+        value = parse_display_seconds(get("PORT", "8000"))
+    except ValueError:
+        raise ValueError("PORT must be an integer from 1 to 65535.") from None
+    if value > 65535:
+        raise ValueError("PORT must be an integer from 1 to 65535.")
+    return value
+
+
+def _bool(get, name, default):
+    raw = get(name, "true" if default else "false").lower()
+    if raw not in {"true", "false", "1", "0"}:
+        raise ValueError(f"{name} must be true or false.")
+    return raw in {"true", "1"}
