@@ -15,11 +15,11 @@ photos/
 └── loose.jpg          (ignored)
 ```
 
-JPEG, PNG, and WebP play as themselves. HEIC and HEIF are converted once to JPEG. Playback order is newest OSS last-modified first. A folder or a set of UTC months can narrow the show.
+JPEG, PNG, and WebP are shown as stored. HEIC and HEIF are converted to JPEG in memory for that request and are not saved again.
 
 ## Status
 
-Phases 1 through 4 are in this checkout. `digitalframe serve` is the slideshow. Phase 4 is the always-on Hong Kong virtual machine. Phase 5 is the plan for waking Function Compute on a visit instead. Both deployment plans are under [`.plans/`](.plans/00-sequence.md).
+Phases 1 through 5 are in this checkout. `digitalframe serve` reads photos from OSS. Phase 4 is the always-on Hong Kong virtual machine. Phase 5 can also run as Function Compute; creating that function is still a manual step in [the runbook](deploy/function-compute.md).
 
 | Phase | Plan | Result |
 | --- | --- | --- |
@@ -27,7 +27,7 @@ Phases 1 through 4 are in this checkout. `digitalframe serve` is the slideshow. 
 | 2 | [Sync library](.plans/02-sync-library.md) | Cache filled from OSS, tested without the network |
 | 3 | [Slideshow site](.plans/03-slideshow-site.md) | Login, canvas playback, focus blackout |
 | 4 | [Hong Kong host](.plans/04-hong-kong-host.md) | Same process on ECS in `cn-hongkong` |
-| 5 | [Function Compute](.plans/05-function-compute.md) | Planned. Wake on visit, no idle virtual machine |
+| 5 | [Function Compute](.plans/05-function-compute.md) | Reads OSS on a visit. The cloud function is still created by hand |
 
 Do not start a phase until the previous phase's exit check is true.
 

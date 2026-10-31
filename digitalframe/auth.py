@@ -1,8 +1,10 @@
 """Passcodes from users.yaml, and the in-memory sessions those passcodes open."""
 
+import base64
 from dataclasses import dataclass
 import hmac
 import hashlib
+import json
 import os
 from pathlib import Path
 import secrets
@@ -89,6 +91,23 @@ def authenticate(users, passcode):
     return matched
 
 
+def load_session_key(settings):
+    """Use SESSION_KEY when set, so another instance can read the same cookies.
+
+    Local and ECS runs keep using secrets/session.key when the variable is absent.
+    """
+    encoded = os.environ.get("SESSION_KEY", "").strip()
+    if encoded:
+        try:
+            data = bytes.fromhex(encoded)
+        except ValueError:
+            data = b""
+        if len(data) != 32:
+            raise ValueError("SESSION_KEY must be 64 hex characters.")
+        return data
+    return ensure_session_key(settings.secrets_dir / "session.key")
+
+
 def ensure_session_key(path):
     """Create a 32-byte key on first run. The file mode is owner-read only."""
     path = Path(path)
@@ -115,45 +134,27 @@ def ensure_session_key(path):
 
 
 class Sessions:
+    """Signed cookies. Nothing about the view is kept in process memory."""
+
     def __init__(self, ttl=SESSION_SECONDS):
         self.ttl = ttl
-        self._items = {}
-        self._lock = Lock()
 
     def start(self, key, name, display_seconds):
-        raw = secrets.token_urlsafe(32)
-        token = f"{raw}.{_sign(key, raw)}"
-        now = time.time()
-        with self._lock:
-            self._items[token] = Session(
-                name=name, expires=now + self.ttl, mode="folder", folder=None,
-                months=(), display_seconds=display_seconds)
-        return token
+        session = Session(
+            name=name, expires=time.time() + self.ttl, mode="folder", folder=None,
+            months=(), display_seconds=display_seconds)
+        return _pack(key, session)
 
     def get(self, key, token):
-        if not _signed(key, token):
+        return _unpack(key, token)
+
+    def update(self, key, token, **changes):
+        session = _unpack(key, token)
+        if session is None:
             return None
-        now = time.time()
-        with self._lock:
-            session = self._items.get(token)
-            if session is None or session.expires <= now:
-                self._items.pop(token, None)
-                return None
-            session.expires = now + self.ttl
-            return session
-
-    def end(self, token):
-        with self._lock:
-            self._items.pop(token, None)
-
-    def update(self, token, **changes):
-        with self._lock:
-            session = self._items.get(token)
-            if session is None:
-                return None
-            for name, value in changes.items():
-                setattr(session, name, value)
-            return session
+        for name, value in changes.items():
+            setattr(session, name, value)
+        return _pack(key, session)
 
 
 class LoginLimiter:
@@ -194,10 +195,95 @@ def _sign(key, raw):
     return hmac.new(key, raw.encode("utf-8"), hashlib.sha256).hexdigest()
 
 
-def _signed(key, token):
+def _pack(key, session):
+    payload = {
+        "name": session.name,
+        "exp": session.expires,
+        "mode": session.mode,
+        "folder": session.folder,
+        "months": list(session.months),
+        "seconds": session.display_seconds,
+    }
+    body = base64.urlsafe_b64encode(
+        json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    ).decode("ascii").rstrip("=")
+    return f"{body}.{_sign(key, 'session:' + body)}"
+
+
+def _unpack(key, token):
+    if not isinstance(token, str) or token.count(".") != 1:
+        return None
+    body, signature = token.split(".", 1)
+    if not body or not hmac.compare_digest(_sign(key, "session:" + body), signature):
+        return None
+    try:
+        padded = body + "=" * (-len(body) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(padded.encode("ascii")))
+    except (ValueError, json.JSONDecodeError, UnicodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    expires = payload.get("exp")
+    mode = payload.get("mode")
+    months = payload.get("months")
+    seconds = payload.get("seconds")
+    folder = payload.get("folder")
+    name = payload.get("name")
+    if (not isinstance(expires, (int, float)) or expires <= time.time()
+            or mode not in {"folder", "months"}
+            or not isinstance(name, str)
+            or not isinstance(seconds, int) or isinstance(seconds, bool) or seconds <= 0
+            or not isinstance(months, list)
+            or any(not _month(item) for item in months)
+            or (folder is not None and not isinstance(folder, str))):
+        return None
+    return Session(
+        name=name, expires=expires, mode=mode, folder=folder or None,
+        months=tuple(months), display_seconds=seconds)
+
+
+def seal(key, text):
+    """Hide an object key inside a token any instance with the key can open."""
+    data = text.encode("utf-8")
+    nonce = hmac.new(key, b"media:" + data, hashlib.sha256).digest()[:16]
+    stream = _keystream(key, nonce, len(data))
+    cipher = bytes(left ^ right for left, right in zip(data, stream))
+    body = base64.urlsafe_b64encode(nonce + cipher).decode("ascii").rstrip("=")
+    return f"{body}.{_sign(key, 'media:' + body)}"
+
+
+def open_seal(key, token):
     if not isinstance(token, str) or "." not in token:
-        return False
-    raw, signature = token.rsplit(".", 1)
-    if not raw or not signature:
-        return False
-    return hmac.compare_digest(_sign(key, raw), signature)
+        return None
+    body, signature = token.rsplit(".", 1)
+    if not body or not hmac.compare_digest(_sign(key, "media:" + body), signature):
+        return None
+    try:
+        padded = body + "=" * (-len(body) % 4)
+        raw = base64.urlsafe_b64decode(padded.encode("ascii"))
+    except (ValueError, UnicodeError):
+        return None
+    if len(raw) < 16:
+        return None
+    nonce, cipher = raw[:16], raw[16:]
+    stream = _keystream(key, nonce, len(cipher))
+    try:
+        return bytes(left ^ right for left, right in zip(cipher, stream)).decode("utf-8")
+    except UnicodeError:
+        return None
+
+
+def _month(value):
+    return (isinstance(value, str) and len(value) == 7 and value[4] == "-"
+            and value[:4].isdigit() and value[5:].isdigit()
+            and 1 <= int(value[5:]) <= 12)
+
+
+def _keystream(key, nonce, size):
+    blocks = []
+    counter = 0
+    while sum(len(block) for block in blocks) < size:
+        blocks.append(hmac.new(
+            key, nonce + counter.to_bytes(4, "big"), hashlib.sha256).digest())
+        counter += 1
+    return b"".join(blocks)[:size]

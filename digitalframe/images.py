@@ -5,11 +5,29 @@ orientation or the size bound requires it. A file already inside the limit
 keeps its original bytes.
 """
 
+from io import BytesIO
+
 from PIL import ExifTags, Image, ImageOps
 from pillow_heif import register_heif_opener
 
 
 register_heif_opener()
+
+
+def jpeg_from_heic(data, *, quality=75):
+    """Convert one HEIC or HEIF payload to JPEG bytes. Nothing is stored."""
+    with Image.open(BytesIO(data)) as image:
+        oriented = ImageOps.exif_transpose(image)
+        output = oriented if oriented.mode == "RGB" else oriented.convert("RGB")
+        buffer = BytesIO()
+        try:
+            output.save(buffer, format="JPEG", quality=quality, optimize=True)
+        finally:
+            if output is not oriented:
+                output.close()
+            if oriented is not image:
+                oriented.close()
+        return buffer.getvalue()
 
 
 def publish_derivative(

@@ -36,6 +36,7 @@ class Settings:
     users_file: str = "users.yaml"
     display_seconds: int = 5
     sync_interval: float = 30.0
+    background_sync: bool = False
 
     def processing_profile(self):
         return (
@@ -82,6 +83,7 @@ def load_settings(root=None):
         users_file=_relative_dir(get, "USERS_FILE", "users.yaml").as_posix(),
         display_seconds=_display_seconds(get),
         sync_interval=_seconds(get, "SYNC_INTERVAL", "30"),
+        background_sync=_bool(get, "BACKGROUND_SYNC", False),
     )
 
 

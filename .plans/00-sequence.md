@@ -1,7 +1,7 @@
 # DigitalFrame-2 sequence
 
 Date: 2026-10-30  
-Status: phases 1 through 4 are in the repository. Phase 5 is a plan only.
+Status: phases 1 through 5 are in the repository. Creating the Function Compute service is still manual.
 
 ## Decision
 

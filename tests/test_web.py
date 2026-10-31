@@ -1,52 +1,52 @@
-"""Slideshow routes against a temporary cache. No browser and no OSS."""
+"""Slideshow routes against a fake bucket. No browser and no network."""
 
+from datetime import datetime, timezone
 import json
 
 from fastapi.testclient import TestClient
 
 from digitalframe.auth import LoginLimiter, Session, Sessions, ensure_session_key, load_users
-from digitalframe.web import TEMPLATE, Library, create_app, run_sync
-from tests.fakes import jpeg_bytes, make_settings
+from digitalframe.library import Library
+from digitalframe.web import TEMPLATE, create_app, run_sync
+from tests.fakes import (
+    fake_client, heic_bytes, jpeg_bytes, make_settings, oss_object, oss_page,
+    oss_prefix, storage_for,
+)
+
+
+def _storage(objects):
+    pages = {"photos/": [oss_page(prefixes=[
+        oss_prefix(f"photos/{album}/") for album in {key.split("/")[1] for key in objects}
+    ])]}
+    for key, payload in objects.items():
+        album = key.split("/")[1]
+        prefix = f"photos/{album}/"
+        pages.setdefault(prefix, [oss_page(contents=[oss_object(prefix)])])
+        pages[prefix][0].contents.append(oss_object(
+            key, size=len(payload["body"]), etag=payload["etag"], modified=payload["modified"]))
+    client = fake_client(pages, {key: payload["body"] for key, payload in objects.items()})
+    return storage_for(client), client
 
 
 def _app(tmp_path):
-    cache = tmp_path / "cache"
-    kids = cache / "kids"
-    holidays = cache / "holidays"
-    kids.mkdir(parents=True)
-    holidays.mkdir()
     newer = jpeg_bytes(20, 10, color=(1, 2, 3))
     older = jpeg_bytes(20, 10, color=(4, 5, 6))
-    (kids / "keep.jpg").write_bytes(newer)
-    (holidays / "old.jpg").write_bytes(older)
-    manifest = {
-        "albums": {
-            "kids": {"modified": "2026-09-12T00:00:00Z"},
-            "holidays": {"modified": "2024-01-02T00:00:00Z"},
+    objects = {
+        "photos/kids/keep.jpg": {
+            "body": newer, "etag": '"keep"',
+            "modified": datetime(2026, 9, 12, tzinfo=timezone.utc),
         },
-        "photos": {
-            "photos/kids/keep.jpg": {
-                "path": "kids/keep.jpg",
-                "album": "kids",
-                "modified": "2026-09-12T00:00:00Z",
-                "month": "2026-09",
-                "etag": "oss-cn-hongkong.aliyuncs.com",
-            },
-            "photos/holidays/old.jpg": {
-                "path": "holidays/old.jpg",
-                "album": "holidays",
-                "modified": "2024-01-02T00:00:00Z",
-                "month": "2024-01",
-                "etag": "oss-cn-hongkong.aliyuncs.com",
-            },
+        "photos/holidays/old.jpg": {
+            "body": older, "etag": '"old"',
+            "modified": datetime(2024, 1, 2, tzinfo=timezone.utc),
         },
     }
-    (cache / ".photos.json").write_text(json.dumps(manifest), encoding="utf-8")
+    storage, _client = _storage(objects)
     users_file = tmp_path / "users.yaml"
     users_file.write_text(
         "users:\n  - name: ada\n    passcode: \"correct-pass\"\n", encoding="utf-8")
     settings = make_settings(tmp_path, cookie_secure=False)
-    library = Library(cache)
+    library = Library(storage, interval=3600, jpeg_quality=75)
     app = create_app(
         settings, library, load_users(users_file), Sessions(), LoginLimiter(),
         ensure_session_key(tmp_path / "secrets" / "session.key"))
@@ -196,16 +196,65 @@ def test_folder_selection_narrows_the_catalog(tmp_path):
     assert len(restored["photos"]) == 2
 
 
-def test_a_failed_sync_sets_a_flag_and_hides_the_exception(tmp_path):
-    library = Library(tmp_path / "cache")
-
-    def explode(_settings):
+def test_a_failed_list_sets_a_flag_and_hides_the_exception(tmp_path):
+    def explode(_storage):
         raise RuntimeError("https://oss-cn-hongkong.aliyuncs.com/photos/secret.jpg")
 
-    run_sync(make_settings(tmp_path), library, lambda *_args: None, explode, lambda *_args: None)
+    library = Library(object(), interval=0, lister=explode)
+    run_sync(library)
     session = Session("ada", 9_999_999_999, "folder", None, (), 5)
-    body = json.dumps(library.catalog(session))
+    body = json.dumps(library.catalog(session, b"k" * 32))
     assert library.sync_problem is True
     assert "aliyuncs" not in body
     assert "photos/" not in body
-    assert body.find("sync_problem") != -1
+    assert "sync_problem" in body
+
+
+def test_a_cookie_works_on_another_instance(tmp_path):
+    app, _newer = _app(tmp_path)
+    first = TestClient(app)
+    signed_in = _login(first)
+    token = signed_in.cookies["digitalframe_session"]
+    first.post("/view", data={"apply": "folder", "folder": "holidays"}, follow_redirects=False)
+    shared = first.cookies["digitalframe_session"]
+    assert shared != token
+
+    other, _again = _app(tmp_path)
+    second = TestClient(other)
+    second.cookies.set("digitalframe_session", shared)
+    catalog = second.get("/catalog")
+    assert catalog.status_code == 200
+    assert catalog.json()["folder"] == "holidays"
+    photo_id = catalog.json()["photos"][0]["id"]
+    assert "photos/" not in photo_id
+    assert second.get(f"/media/{photo_id}").status_code == 200
+
+
+def test_heic_is_converted_in_memory_and_not_stored(tmp_path):
+    from PIL import Image
+    from io import BytesIO
+
+    payload = heic_bytes()
+    storage, client = _storage({
+        "photos/kids/portrait.heic": {
+            "body": payload, "etag": '"heic"',
+            "modified": datetime(2026, 9, 12, tzinfo=timezone.utc),
+        },
+    })
+    users_file = tmp_path / "users.yaml"
+    users_file.write_text(
+        "users:\n  - name: ada\n    passcode: \"correct-pass\"\n", encoding="utf-8")
+    settings = make_settings(tmp_path, cookie_secure=False)
+    library = Library(storage, interval=3600, jpeg_quality=75)
+    app = create_app(
+        settings, library, load_users(users_file), Sessions(), LoginLimiter(),
+        ensure_session_key(tmp_path / "secrets" / "session.key"))
+    browser = TestClient(app)
+    _login(browser)
+    photo_id = browser.get("/catalog").json()["photos"][0]["id"]
+    media = browser.get(f"/media/{photo_id}")
+    assert media.headers["content-type"].startswith("image/jpeg")
+    assert media.content != payload
+    with Image.open(BytesIO(media.content)) as image:
+        assert image.format == "JPEG"
+    assert client.put_object.call_count == 0

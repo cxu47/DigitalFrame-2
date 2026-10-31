@@ -1,7 +1,7 @@
 # Phase 5 — Function Compute
 
 Date: 2026-10-30  
-Status: plan only. Do not start until this plan is accepted.  
+Status: implemented in the app. The Function Compute service itself is not created; follow [../deploy/function-compute.md](../deploy/function-compute.md).  
 Requires: [04-hong-kong-host.md](04-hong-kong-host.md) stays in place. The ECS runbook is not removed.  
 Next: none. Implementation waits for an explicit go-ahead.
 

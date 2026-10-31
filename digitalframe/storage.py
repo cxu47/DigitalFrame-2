@@ -108,6 +108,24 @@ def download_photo(storage, object_key, destination):
         raise
 
 
+def read_photo(storage, object_key):
+    """Read one confined photo into memory. Nothing is written to disk."""
+    object_key = confined_key(object_key, storage.prefix)
+    result = storage.client.get_object(oss.GetObjectRequest(
+        bucket=storage.bucket, key=object_key))
+    checksum = Crc64(0)
+    chunks = []
+    with result.body as body:
+        for chunk in body.iter_bytes(block_size=DOWNLOAD_CHUNK_SIZE):
+            chunks.append(chunk)
+            checksum.update(chunk)
+    server_checksum = getattr(result, "hash_crc64", None)
+    if server_checksum is not None and checksum.sum64() != int(server_checksum):
+        raise oss.exceptions.InconsistentError(
+            client_crc=str(checksum.sum64()), server_crc=str(server_checksum))
+    return b"".join(chunks)
+
+
 def confined_key(object_key, prefix):
     if not isinstance(object_key, str) or not object_key.startswith(prefix):
         raise ValueError("OSS object key is outside the configured photos prefix")
