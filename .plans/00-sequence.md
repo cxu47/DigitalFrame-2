@@ -21,7 +21,7 @@ Each phase starts only after the previous exit check passes. Later plans assume 
 | 2 | [02-sync-library.md](02-sync-library.md) | Phase 1 | `pytest` covers album rules with a fake OSS client |
 | 3 | [03-slideshow-site.md](03-slideshow-site.md) | Phase 2 | On localhost, a wrong passcode stays out, a focused page plays, and blur turns the page black |
 | 4 | [04-hong-kong-host.md](04-hong-kong-host.md) | Phase 3 | The container image builds locally. Creating the VM is a separate, manual step |
-| 5 | [05-function-compute.md](05-function-compute.md) | Phase 4 stays available | A visit wakes Function Compute in `cn-hongkong`, and idle time does not keep a virtual machine |
+| 5 | [05-function-compute.md](05-function-compute.md) | Phase 4 stays available | A visit wakes Function Compute in `cn-hongkong`. Photos are read from OSS, not from a scaled cache |
 
 ## Kept from DigitalFrame
 

@@ -14,8 +14,8 @@ The current process cannot be moved unchanged. Three things assume a machine tha
 | Current behavior | Why it breaks at zero instances | Replacement |
 | --- | --- | --- |
 | Sessions live in process memory | The next visit can start a new instance that has never seen the cookie | A signed cookie that carries the view by itself |
-| A background thread syncs forever | Nothing runs while the function is frozen | Sync when a visit finds the catalog stale |
-| Derivatives sit on a local disk | That disk disappears with the instance | Store derivatives in the same private bucket, under a separate prefix |
+| A background thread syncs forever | Nothing runs while the function is frozen | List the bucket when a visit finds the catalog stale |
+| Photos are scaled and stored on a local disk | That disk disappears with the instance, and the scaled copy is no longer wanted | Read the original object from OSS. Convert HEIC in memory for that request only |
 
 What stays: the photo rules, passcode file, canvas playback, focus blackout, translations, and the phase 4 ECS path. Local `digitalframe serve` and the ECS container keep working. Function Compute is a second way to run the same app.
 
@@ -26,7 +26,7 @@ Idle cost stays small only if these are refused:
 - A NAS disk. It bills every month whether or not anyone visits.
 - A timer that wakes the function on a schedule. Sync happens on a visit instead.
 
-Standing cost is then OSS storage for the original photos and the derivatives, plus the container image in a registry in `cn-hongkong`. Compute is billed for the seconds a visit keeps an instance awake, including a short platform grace period after the last request. The first visit after a quiet stretch waits through a cold start, often several seconds, before the login page appears.
+Standing cost is then OSS storage for the original photos, plus the container image in a registry in `cn-hongkong`. There is no second copy of the pictures. Compute is billed for the seconds a visit keeps an instance awake, including a short platform grace period after the last request. The first visit after a quiet stretch waits through a cold start, often several seconds, before the login page appears.
 
 Hong Kong Function Compute does not need ICP filing. Viewers in mainland China use the same kind of path as the Hong Kong ECS plan: HTTPS to Hong Kong, then the function reads the private bucket. The browser still never receives an OSS URL.
 
@@ -45,40 +45,40 @@ The cookie is already signed with the session key. The view is not in the cookie
 
 Exit check: pytest passes, and a restarted local process accepts an existing cookie.
 
-### 2. Sync on visit
+### 2. Read the originals
+
+Drop the 1600×900 bound and the disk cache. The app lists `photos/` and loads each object from OSS when the page asks for it. Nothing is written back to the bucket.
+
+- JPEG, PNG, and WebP are streamed through as stored. They are not scaled, recompressed, or saved.
+- HEIC and HEIF are decoded in memory and returned as a JPEG for that response only. The JPEG is not stored in OSS, on disk, or for the next request.
+- The browser still receives bytes only from the app. It never receives an OSS URL.
+- RAM stays list and get on `photos/*`. No `PutObject`.
+- A full-resolution HEIC needs room in RAM. Size the function around 2 GB. One conversion must finish inside the request timeout.
+- A failed list still returns the last catalog held in that instance, and sets "Cannot reach the photo library". A cold instance with no catalog yet shows the waiting screen.
+
+Exit check: pytest uses a fake bucket. A JPEG response matches the object bytes. A HEIC response is a JPEG and does not create an object. No test writes under `photos/`.
+
+### 3. List on visit
 
 - Remove the requirement that a background thread run for the life of the process.
-- On `/catalog` or `/media`, if the last successful catalog is older than `SYNC_INTERVAL`, sync before answering.
-- Two overlapping requests must not sync the same cache at once. The existing cache lock is enough.
-- A failed sync still serves the previous derivatives and sets the existing "Cannot reach the photo library" flag.
+- On `/catalog` or `/media`, if the last successful list is older than `SYNC_INTERVAL`, list again before answering.
+- Two overlapping requests must not list the same bucket at once.
 - Local `digitalframe serve` may keep a background thread. Function Compute must be correct without one.
 
-Exit check: pytest covers a stale catalog syncing once, and a second overlapping call waiting instead of starting another sync.
-
-### 3. Derivatives in OSS
-
-Function Compute disk is ephemeral and is not shared. Rebuilding every HEIC on every cold slideshow is too slow.
-
-- Publish the same playback bytes the local cache publishes, under a new prefix such as `derivatives/`.
-- The object name is derived from the source key, etag, and processing profile. A matching object is reused and not converted again.
-- The RAM policy gains `oss:PutObject` and `oss:GetObject` only on `derivatives/*`. `photos/*` stays get-only. There is still no delete of originals.
-- Local and ECS runs may keep using the disk cache. The Function Compute configuration selects the OSS derivative store.
-- The browser still receives bytes only from the app.
-
-Exit check: pytest uses a fake bucket, shows a second sync skipping a completed derivative, and shows no write under `photos/`.
+Exit check: pytest covers a stale catalog listing once, and a second overlapping call waiting instead of starting another list.
 
 ### 4. Function Compute runbook
 
 Add `deploy/function-compute.md`. Do not create the function in this phase's exit check. The runbook covers:
 
 1. Keep the bucket private and in `cn-hongkong`.
-2. Extend the RAM policy as in step 3. Do not use the account root key.
+2. Keep the RAM policy as list and get on `photos/*` only. Do not use the account root key.
 3. Push `digitalframe-2` to a container registry in `cn-hongkong`.
 4. Create an HTTP function from that image. Listen on port `9000`, which Function Compute expects. Set `HOST=0.0.0.0`, `PORT=9000`, `COOKIE_SECURE=true`, and `SESSION_KEY`.
-5. Memory around 1 GB so a HEIC conversion can finish. Raise the request timeout enough for one conversion. Minimum instances: 0. No provisioned instances. No NAS.
+5. Memory around 2 GB so one full-resolution HEIC can be converted in memory. Raise the request timeout enough for that conversion. Minimum instances: 0. No provisioned instances. No NAS. No derivative prefix.
 6. Attach a domain and HTTPS. A bare IP is not the target. Do not open the function by handing out OSS links.
-7. Confirm a cold visit shows the login page, a passcode plays a photo, and a second visit reuses the stored derivative.
+7. Confirm a cold visit shows the login page, a passcode plays a photo loaded from OSS, and a HEIC plays without a file being written back.
 
 ## Left unchanged
 
-Phase 4's Dockerfile, ECS runbook, and commits stay. This phase does not amend them. A disk-backed `digitalframe serve` remains the local and ECS behavior.
+Phase 4's Dockerfile, ECS runbook, and commits stay. This phase does not amend them. When this phase is built, local and ECS `digitalframe serve` use the same read path: originals from OSS, no scaling, HEIC converted in memory per request. The settings that are kept are only the signed cookie: folder, months, and seconds per photo.
