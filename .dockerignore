@@ -1,0 +1,12 @@
+.venv
+.git
+cache
+secrets
+.env
+users.yaml
+tmp-browser
+**/__pycache__
+**/*.pyc
+.pytest_cache
+tests
+.plans
