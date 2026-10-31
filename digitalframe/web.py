@@ -16,9 +16,15 @@ from .sync import MANIFEST_NAME
 
 
 logger = logging.getLogger(__name__)
-LOGIN_ERROR = "That name or passcode is not recognized."
-SECONDS_ERROR = "Enter a positive whole number of seconds, such as 5."
+ERRORS = {
+    "passcode": "That passcode is not recognized.",
+    "seconds": "Enter a positive whole number of seconds, such as 5.",
+    "months": "Choose months as YYYY-MM.",
+    "folder": "Choose a photo folder.",
+    "locked": "Too many attempts. Try again later.",
+}
 TEMPLATE = Path(__file__).resolve().parent / "templates" / "slideshow.html"
+TRANSLATIONS = Path(__file__).resolve().parent / "translations.json"
 MEDIA_HEADERS = {
     "Cache-Control": "no-store",
     "X-Content-Type-Options": "nosniff",
@@ -110,39 +116,34 @@ def create_app(settings, library, users, sessions, limiter, session_key):
             return None, JSONResponse({"detail": "Sign in."}, status_code=401)
         return session, None
 
+    @app.get("/translations.json")
+    def translations():
+        return Response(TRANSLATIONS.read_bytes(), media_type="application/json")
+
     @app.get("/", response_class=HTMLResponse)
     def home(request: Request):
         session = current(request)
         if session is None:
-            return HTMLResponse(_render(page, signed_in=False, error=""))
-        return HTMLResponse(_render(page, signed_in=True, error=""))
+            return HTMLResponse(_render(page, signed_in=False))
+        return HTMLResponse(_render(page, signed_in=True))
 
     @app.post("/login")
-    def login(request: Request, name: str = Form(""), passcode: str = Form("")):
+    def login(request: Request, passcode: str = Form("")):
         address = request.client.host if request.client is not None else "unknown"
         if limiter.blocked(address):
-            return Response("Too many attempts. Try again later.", status_code=429)
-        if not authenticate(users, name, passcode):
+            return HTMLResponse(
+                _render(page, signed_in=False, error_code="locked"), status_code=429)
+        user = authenticate(users, passcode)
+        if user is None:
             limiter.fail(address)
             return HTMLResponse(
-                _render(page, signed_in=False, error=LOGIN_ERROR), status_code=401)
+                _render(page, signed_in=False, error_code="passcode"), status_code=401)
         limiter.succeed(address)
-        token = sessions.start(session_key, name, settings.display_seconds)
+        token = sessions.start(session_key, user.name, settings.display_seconds)
         response = RedirectResponse("/", status_code=303)
         response.set_cookie(
             COOKIE_NAME, token, httponly=True, samesite="strict", path="/",
             secure=settings.cookie_secure, max_age=sessions.ttl)
-        return response
-
-    @app.post("/logout")
-    def logout(request: Request):
-        token = request.cookies.get(COOKIE_NAME)
-        session, denial = require(request)
-        if denial is not None:
-            return denial
-        sessions.end(token)
-        response = RedirectResponse("/", status_code=303)
-        response.delete_cookie(COOKIE_NAME, path="/")
         return response
 
     @app.get("/catalog")
@@ -163,36 +164,44 @@ def create_app(settings, library, users, sessions, limiter, session_key):
         return Response(path.read_bytes(), media_type=CONTENT_TYPES[path.suffix.lower()],
                         headers=MEDIA_HEADERS)
 
+    @app.post("/reset")
+    def reset(request: Request):
+        session, denial = require(request)
+        if denial is not None:
+            return denial
+        sessions.update(
+            request.cookies.get(COOKIE_NAME), mode="folder", folder=None, months=(),
+            display_seconds=settings.display_seconds)
+        return RedirectResponse("/", status_code=303)
+
     @app.post("/view")
-    def view(request: Request, action: str = Form(""), folder: str = Form(""),
+    def view(request: Request, apply: str = Form(""), folder: str = Form(""),
              display_seconds: str = Form(""), months: list[str] = Form(default=[])):
         session, denial = require(request)
         if denial is not None:
             return denial
         token = request.cookies.get(COOKIE_NAME)
-        if action == "seconds":
+        if apply == "seconds":
             try:
                 seconds = parse_display_seconds(display_seconds)
             except ValueError:
                 return HTMLResponse(
-                    _render(page, signed_in=True, error=SECONDS_ERROR), status_code=422)
+                    _render(page, signed_in=True, error_code="seconds"), status_code=422)
             sessions.update(token, display_seconds=seconds)
-        elif action == "months":
+        elif apply == "months":
             try:
                 chosen = tuple(dict.fromkeys(months))
                 if any(not _valid_month(month) for month in chosen):
                     raise ValueError
             except (TypeError, ValueError):
                 return HTMLResponse(
-                    _render(page, signed_in=True, error="Choose months as YYYY-MM."),
-                    status_code=422)
+                    _render(page, signed_in=True, error_code="months"), status_code=422)
             sessions.update(token, mode="months", months=chosen)
         else:
             album = folder.strip()
             if album and (album in {".", ".."} or "/" in album or "\\" in album):
                 return HTMLResponse(
-                    _render(page, signed_in=True, error="Choose a photo folder."),
-                    status_code=422)
+                    _render(page, signed_in=True, error_code="folder"), status_code=422)
             sessions.update(token, mode="folder", folder=album or None)
         return RedirectResponse("/", status_code=303)
 
@@ -210,12 +219,13 @@ def run_sync(settings, library, open_storage, load_oss_config, sync_once):
         library.set_sync_problem(True)
 
 
-def _render(page, *, signed_in, error):
+def _render(page, *, signed_in, error_code=""):
     shown = "slideshow" if signed_in else "login"
     return (page.replace("{{BODY_CLASS}}", shown)
             .replace("{{LOGIN_ATTR}}", "" if shown == "login" else "hidden")
             .replace("{{APP_ATTR}}", "" if shown == "slideshow" else "hidden")
-            .replace("{{ERROR}}", escape(error)))
+            .replace("{{ERROR_CODE}}", error_code)
+            .replace("{{ERROR}}", escape(ERRORS.get(error_code, ""))))
 
 
 def _albums(records):

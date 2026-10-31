@@ -53,20 +53,19 @@ def _app(tmp_path):
     return app, newer
 
 
-def _login(client, name="ada", passcode="correct-pass"):
-    return client.post("/login", data={"name": name, "passcode": passcode},
-                        follow_redirects=False)
+def _login(client, passcode="correct-pass"):
+    return client.post("/login", data={"passcode": passcode}, follow_redirects=False)
 
 
 def test_missing_and_wrong_passcodes_match_and_set_no_cookie(tmp_path):
     app, _newer = _app(tmp_path)
     client = TestClient(app)
-    missing = _login(client, "", "")
-    wrong = _login(client, "ada", "nope")
+    missing = _login(client, "")
+    wrong = _login(client, "nope")
 
     assert missing.status_code == wrong.status_code == 401
     assert missing.text == wrong.text
-    assert "That name or passcode is not recognized." in missing.text
+    assert "That passcode is not recognized." in missing.text
     assert "set-cookie" not in missing.headers
     assert "set-cookie" not in wrong.headers
 
@@ -111,16 +110,43 @@ def test_the_sixth_failure_is_rejected(tmp_path):
     app, _newer = _app(tmp_path)
     client = TestClient(app)
     for _ in range(5):
-        assert _login(client, "ada", "nope").status_code == 401
-    assert _login(client, "ada", "correct-pass").status_code == 429
+        assert _login(client, "nope").status_code == 401
+    assert _login(client, "correct-pass").status_code == 429
+
+
+def test_translations_come_from_a_dictionary_file(tmp_path):
+    app, _newer = _app(tmp_path)
+    client = TestClient(app)
+    dictionary = client.get("/translations.json")
+    assert dictionary.status_code == 200
+    words = dictionary.json()
+    assert words["en"]["enter"] == "Enter"
+    assert words["zh"]["enter"] == "进入"
+    assert words["pl"]["enter"] == "Wejdź"
+    page = client.get("/").text
+    assert 'data-i18n="enter"' in page
+    assert "进入" not in page
+    assert "Wejdź" not in page
 
 
 def test_the_template_and_the_page_have_no_image_tag(tmp_path):
     text = TEMPLATE.read_text(encoding="utf-8")
     assert "<img" not in text.lower()
+    assert "Log out" not in text
+    assert "Reset" in text
+    assert 'id="previous"' in text
+    assert 'id="next"' in text
+    assert 'id="pause"' in text
+    assert 'id="shuffle"' in text
+    assert 'id="month-picker"' in text
+    assert 'id="month-checks"' in text
+    assert 'data-lang="zh"' in text
+    assert 'data-lang="pl"' in text
     app, _newer = _app(tmp_path)
     client = TestClient(app)
-    assert "<img" not in client.get("/").text.lower()
+    login = client.get("/")
+    assert 'id="playback" hidden' in login.text
+    assert "<img" not in login.text.lower()
     _login(client)
     page = client.get("/")
     assert page.status_code == 200
@@ -132,12 +158,12 @@ def test_invalid_display_seconds_do_not_change_the_session(tmp_path):
     app, _newer = _app(tmp_path)
     client = TestClient(app)
     _login(client)
-    rejected = client.post("/view", data={"action": "seconds", "display_seconds": "5.0"},
+    rejected = client.post("/view", data={"apply": "seconds", "display_seconds": "5.0"},
                             follow_redirects=False)
     assert rejected.status_code == 422
     assert "positive whole number" in rejected.text
     assert client.get("/catalog").json()["display_seconds"] == 5
-    accepted = client.post("/view", data={"action": "seconds", "display_seconds": "8"},
+    accepted = client.post("/view", data={"apply": "seconds", "display_seconds": "8"},
                             follow_redirects=False)
     assert accepted.status_code == 303
     assert client.get("/catalog").json()["display_seconds"] == 8
@@ -148,7 +174,7 @@ def test_folder_selection_narrows_the_catalog(tmp_path):
     client = TestClient(app)
     _login(client)
     assert len(client.get("/catalog").json()["photos"]) == 2
-    response = client.post("/view", data={"action": "folder", "folder": "holidays"},
+    response = client.post("/view", data={"apply": "folder", "folder": "holidays"},
                             follow_redirects=False)
     assert response.status_code == 303
     catalog = client.get("/catalog").json()
@@ -156,6 +182,18 @@ def test_folder_selection_narrows_the_catalog(tmp_path):
     assert catalog["folder"] == "holidays"
     assert len(catalog["photos"]) == 1
     assert catalog["photos"][0]["modified"].startswith("2024-01-02")
+    months = client.post("/view", data={"apply": "months", "months": "2026-09"},
+                          follow_redirects=False)
+    assert months.status_code == 303
+    by_month = client.get("/catalog").json()
+    assert by_month["mode"] == "months"
+    assert by_month["photos"][0]["modified"].startswith("2026-09-12")
+    reset = client.post("/reset", follow_redirects=False)
+    assert reset.status_code == 303
+    restored = client.get("/catalog").json()
+    assert restored["mode"] == "folder"
+    assert restored["folder"] is None
+    assert len(restored["photos"]) == 2
 
 
 def test_a_failed_sync_sets_a_flag_and_hides_the_exception(tmp_path):

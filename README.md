@@ -57,7 +57,7 @@ Open the site on this machine:
 uv run --no-sync digitalframe serve
 ```
 
-That listens on `127.0.0.1:8000` unless `.env` says otherwise. A name and passcode from `users.yaml` open the slideshow. The page is black while the window is in the background. Photos are drawn on a canvas, so the usual Save image action is not offered.
+That listens on `127.0.0.1:8000` unless `.env` says otherwise. A passcode from `users.yaml` opens the slideshow. The names in that file are labels. The page is black while the window is in the background. Photos are drawn on a canvas, so the usual Save image action is not offered. Reset reloads the show from the beginning.
 
 Automated checks use a fake OSS client:
 

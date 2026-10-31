@@ -63,21 +63,30 @@ def load_users(path):
                 f"{path.name} has a user without a passcode. Quote passcodes so they stay text.")
         if name in users:
             raise ValueError(f"{path.name} lists {name} more than once.")
+        if any(existing.passcode == passcode for existing in users.values()):
+            raise ValueError(f"{path.name} uses the same passcode more than once.")
         users[name] = User(name, passcode)
     return users
 
 
-def authenticate(users, name, passcode):
-    """Return whether this name and passcode match. The passcode is not trimmed."""
-    if not isinstance(name, str) or not isinstance(passcode, str):
-        return False
-    record = users.get(name)
+def authenticate(users, passcode):
+    """Return the user whose passcode matches. The passcode is not trimmed.
+
+    The name in the YAML file is a label. It is not part of the check.
+    """
+    if not isinstance(passcode, str):
+        return None
     given = passcode.encode("utf-8")
-    expected = record.passcode.encode("utf-8") if record is not None else b""
-    if record is None or len(given) != len(expected):
-        hmac.compare_digest(given, given)
-        return False
-    return hmac.compare_digest(expected, given)
+    matched = None
+    records = list(users.values()) or [None]
+    for record in records:
+        expected = record.passcode.encode("utf-8") if record is not None else b""
+        if len(given) != len(expected):
+            hmac.compare_digest(given, given)
+            continue
+        if hmac.compare_digest(expected, given) and record is not None:
+            matched = record
+    return matched
 
 
 def ensure_session_key(path):

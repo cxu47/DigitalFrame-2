@@ -27,7 +27,7 @@ digitalframe = "digitalframe.cli:main"
 packages = ["digitalframe"]
 
 [tool.setuptools.package-data]
-digitalframe = ["templates/*.html"]
+digitalframe = ["templates/*.html", "translations.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

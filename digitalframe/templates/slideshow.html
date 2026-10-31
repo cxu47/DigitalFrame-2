@@ -5,71 +5,165 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>DigitalFrame</title>
   <style>
-    html, body { margin: 0; background: #000; color: #eee; font: 16px sans-serif; }
-    body.login #stage, body.login #controls { display: none; }
+    html, body { margin: 0; height: 100%; background: #000; color: #eee; font: 16px sans-serif; }
+    body.slideshow { height: 100dvh; display: flex; flex-direction: column; overflow: hidden; }
+    body.login #stage, body.login #controls, body.login #playback { display: none !important; }
     body.slideshow #login { display: none; }
-    #login { max-width: 22rem; margin: 18vh auto; padding: 0 1rem; }
+    #playback[hidden], #stage[hidden], #controls[hidden], #login[hidden], #month-checks[hidden] { display: none !important; }
+    #top-bar {
+      display: flex; flex-direction: column; align-items: center; gap: 0.55rem;
+      padding: 0.7rem 1rem; border-bottom: 1px solid #444;
+    }
+    #playback, #languages { display: flex; gap: 0.5rem; justify-content: center; }
+    #languages button[aria-pressed="true"] { outline: 1px solid #ccc; }
+    #login { max-width: 22rem; margin: 12vh auto; padding: 0 1rem; }
     label { display: block; margin: 0.8rem 0 0.2rem; }
     input, select, button { font: inherit; }
     .error { color: #f66; min-height: 1.2rem; }
-    #stage { position: relative; height: calc(100vh - 8rem); background: #000; }
-    canvas { width: 100%; height: 100%; background: #000; }
-    #shield { position: absolute; inset: 0; }
-    #waiting, #problem { position: absolute; top: 1rem; left: 1rem; margin: 0; }
+    #stage { position: relative; z-index: 1; flex: 1; min-height: 0; background: #000; }
+    canvas, #shield { position: absolute; inset: 0; width: 100%; height: 100%; }
+    canvas { background: #000; }
+    #waiting, #problem { position: absolute; top: 1rem; left: 1rem; margin: 0; z-index: 1; }
     #problem { color: #f66; top: 3rem; }
-    #veil { position: fixed; inset: 0; background: #000; z-index: 10; }
-    #controls { display: flex; gap: 1.5rem; flex-wrap: wrap; padding: 0.75rem 1rem; }
+    #veil { position: fixed; inset: 0; background: #000; z-index: 20; }
+    #controls {
+      position: relative; z-index: 5; overflow: visible;
+      display: flex; align-items: stretch; flex-wrap: nowrap;
+      border-top: 1px solid #444; padding: 0.4rem 0 0.8rem;
+    }
+    .control-group { flex: 1; padding: 0.4rem 1rem; min-width: 10rem; }
+    .control-group + .control-group { border-left: 1px solid #444; }
+    #month-menu { position: relative; }
+    #month-picker { width: 100%; text-align: left; }
+    #month-checks {
+      position: absolute; z-index: 2; bottom: calc(100% + 0.3rem); left: 0;
+      min-width: 100%; max-height: 16rem; overflow: auto;
+      background: #161616; border: 1px solid #666; padding: 0.25rem 0.5rem;
+    }
+    #month-checks label { display: flex; align-items: center; gap: 0.45rem; min-height: 2.4rem; margin: 0; }
     #stage, #shield, canvas {
       user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
     }
-    #mode-label { align-self: end; }
   </style>
 </head>
 <body class="{{BODY_CLASS}}">
+  <header id="top-bar">
+    <div id="playback" {{APP_ATTR}}>
+      <button type="button" id="previous" data-i18n="previous">Previous</button>
+      <button type="button" id="pause" data-i18n="pause">Pause</button>
+      <button type="button" id="next" data-i18n="next">Next</button>
+      <button type="button" id="shuffle" data-i18n="shuffleOff" aria-pressed="false">Shuffle: off</button>
+    </div>
+    <div id="languages">
+      <button type="button" data-lang="en" aria-pressed="true">English</button>
+      <button type="button" data-lang="zh" aria-pressed="false">中文</button>
+      <button type="button" data-lang="pl" aria-pressed="false">Polski</button>
+    </div>
+  </header>
+
   <form id="login" method="post" action="/login" {{LOGIN_ATTR}}>
     <h1>DigitalFrame</h1>
-    <label for="name">Name</label>
-    <input id="name" name="name" autocomplete="username" required>
-    <label for="passcode">Passcode</label>
+    <label for="passcode" data-i18n="passcode">Passcode</label>
     <input id="passcode" name="passcode" type="password" autocomplete="current-password" required>
-    <p class="error">{{ERROR}}</p>
-    <button type="submit">Enter</button>
+    <p id="login-error" class="error" data-i18n-error="{{ERROR_CODE}}">{{ERROR}}</p>
+    <button type="submit" data-i18n="enter">Enter</button>
   </form>
 
   <div id="stage" {{APP_ATTR}}>
     <canvas id="frame" width="800" height="450"></canvas>
     <div id="shield"></div>
-    <p id="waiting">Waiting for photos</p>
-    <p id="problem" hidden>Cannot reach the photo library</p>
-    <div id="veil" hidden></div>
+    <p id="waiting" data-i18n="waiting">Waiting for photos</p>
+    <p id="problem" data-i18n="problem" hidden>Cannot reach the photo library</p>
   </div>
 
   <div id="controls" {{APP_ATTR}}>
-    <form method="post" action="/view">
-      <input type="hidden" name="action" value="folder">
-      <label for="folder">Photo folder</label>
+    <form class="control-group" method="post" action="/view">
+      <input type="hidden" name="apply" value="folder">
+      <label for="folder" data-i18n="folder">Photo folder</label>
       <select id="folder" name="folder"></select>
-      <button type="submit">Apply folder</button>
+      <button type="submit" data-i18n="applyFolder">Apply folder</button>
     </form>
-    <form method="post" action="/view">
-      <input type="hidden" name="action" value="months">
-      <div id="months"></div>
-      <button type="submit">Apply months</button>
+    <form class="control-group" method="post" action="/view">
+      <input type="hidden" name="apply" value="months">
+      <label id="months-label" data-i18n="months">Months</label>
+      <div id="month-menu">
+        <button type="button" id="month-picker" aria-expanded="false" aria-controls="month-checks" data-i18n="addMonth">Add a month</button>
+        <div id="month-checks" hidden></div>
+      </div>
+      <button type="submit" data-i18n="applyMonths">Apply months</button>
     </form>
-    <form method="post" action="/view">
-      <input type="hidden" name="action" value="seconds">
-      <label for="seconds">Seconds per photo</label>
-      <input id="seconds" name="display_seconds" inputmode="numeric" value="5">
-      <button type="submit">Apply</button>
-    </form>
-    <p id="mode-label">Active: Folder</p>
-    <p id="view-error" class="error">{{ERROR}}</p>
-    <form method="post" action="/logout">
-      <button type="submit">Log out</button>
-    </form>
+    <div class="control-group">
+      <form method="post" action="/view">
+        <input type="hidden" name="apply" value="seconds">
+        <label for="seconds" data-i18n="seconds">Seconds per photo</label>
+        <input id="seconds" name="display_seconds" inputmode="numeric" value="5">
+        <button type="submit" data-i18n="apply">Apply</button>
+      </form>
+      <form method="post" action="/reset">
+        <button type="submit" data-i18n="reset">Reset</button>
+      </form>
+    </div>
+    <p id="mode-label">Active: All</p>
+    <p id="view-error" class="error" data-i18n-error="{{ERROR_CODE}}">{{ERROR}}</p>
   </div>
+  <div id="veil" hidden></div>
   <script>
+    let copy = null;
+    const errorKey = { passcode: "passcodeError", seconds: "secondsError", months: "choice", folder: "choice", locked: "locked" };
+    let lang = localStorage.getItem("digitalframe-language");
+    if (lang !== "zh" && lang !== "pl") lang = "en";
+
+    function text(key) {
+      if (!copy) return "";
+      return (copy[lang] && copy[lang][key]) || copy.en[key] || "";
+    }
+
+    function translate() {
+      document.documentElement.lang = lang === "zh" ? "zh-Hans" : lang;
+      document.querySelectorAll("[data-i18n]").forEach((element) => {
+        if (element.id === "pause" || element.id === "shuffle" || element.id === "month-picker") return;
+        element.textContent = text(element.dataset.i18n);
+      });
+      document.querySelectorAll("[data-i18n-error]").forEach((element) => {
+        const code = element.dataset.i18nError;
+        element.textContent = code ? text(errorKey[code] || code) : "";
+      });
+      document.querySelectorAll("#languages button").forEach((button) => {
+        button.setAttribute("aria-pressed", button.dataset.lang === lang ? "true" : "false");
+      });
+      const pause = document.getElementById("pause");
+      if (pause && document.body.classList.contains("slideshow")) {
+        pause.textContent = text(paused ? "play" : "pause");
+      }
+      const shuffleButton = document.getElementById("shuffle");
+      if (shuffleButton && document.body.classList.contains("slideshow")) {
+        shuffleButton.textContent = text(shuffle ? "shuffleOn" : "shuffleOff");
+      }
+      if (typeof onLanguage === "function") onLanguage();
+    }
+
+    fetch("/translations.json", { credentials: "same-origin" })
+      .then((response) => response.json())
+      .then((data) => {
+        copy = data;
+        if (!copy[lang]) lang = "en";
+        translate();
+      });
+
+    document.querySelectorAll("#languages button").forEach((button) => {
+      button.addEventListener("click", () => {
+        lang = button.dataset.lang;
+        localStorage.setItem("digitalframe-language", lang);
+        translate();
+      });
+    });
+
     const body = document.body;
+    let paused = false;
+    let shuffle = false;
+    let lastData = null;
+    let onLanguage = null;
+
     if (body.classList.contains("slideshow")) {
       const stage = document.getElementById("stage");
       const canvas = document.getElementById("frame");
@@ -78,11 +172,13 @@
       const waiting = document.getElementById("waiting");
       const problem = document.getElementById("problem");
       const viewError = document.getElementById("view-error");
+      const monthPicker = document.getElementById("month-picker");
+      let serverPhotos = [];
       let photos = [];
-      let upcoming = [];
-      let index = 0;
+      let position = -1;
       let shown = new Set();
       let haveCatalog = false;
+      let selection = "";
       let currentId = null;
       let displaySeconds = 5;
       let timer = null;
@@ -116,11 +212,13 @@
           return;
         }
         veil.hidden = true;
-        if (currentId) {
-          show(currentId);
-        } else {
-          advance();
+        if (!currentId) {
+          go(1);
+          return;
         }
+        show(currentId).then((displayed) => {
+          if (displayed && focused() && !paused) schedule();
+        });
       }
 
       shield.addEventListener("contextmenu", (event) => event.preventDefault());
@@ -130,97 +228,125 @@
       document.addEventListener("visibilitychange", focusChanged);
       window.addEventListener("blur", focusChanged);
       window.addEventListener("focus", focusChanged);
+      window.addEventListener("resize", () => {
+        if (currentId && focused()) show(currentId);
+      });
 
       function fit(bitmap) {
-        const rect = stage.getBoundingClientRect();
-        canvas.width = Math.max(1, Math.floor(rect.width));
-        canvas.height = Math.max(1, Math.floor(rect.height));
-        const scale = Math.min(canvas.width / bitmap.width, canvas.height / bitmap.height);
-        const width = bitmap.width * scale;
-        const height = bitmap.height * scale;
+        const width = Math.max(1, stage.clientWidth);
+        const height = Math.max(1, stage.clientHeight);
+        canvas.width = width;
+        canvas.height = height;
+        const scale = Math.min(width / bitmap.width, height / bitmap.height);
+        const drawnWidth = bitmap.width * scale;
+        const drawnHeight = bitmap.height * scale;
         const context = canvas.getContext("2d");
         context.fillStyle = "#000";
-        context.fillRect(0, 0, canvas.width, canvas.height);
-        context.drawImage(bitmap, (canvas.width - width) / 2, (canvas.height - height) / 2, width, height);
+        context.fillRect(0, 0, width, height);
+        context.drawImage(
+          bitmap, (width - drawnWidth) / 2, (height - drawnHeight) / 2, drawnWidth, drawnHeight);
       }
 
       async function show(id) {
         drawing = true;
-        const response = await fetch("/media/" + encodeURIComponent(id), { credentials: "same-origin" });
-        if (!response.ok || !focused()) {
-          drawing = false;
-          if (!focused()) blackout(true);
-          return;
-        }
-        const blob = await response.blob();
-        const url = URL.createObjectURL(blob);
+        let url = "";
         try {
+          const response = await fetch("/media/" + encodeURIComponent(id), { credentials: "same-origin" });
+          if (!response.ok || !focused()) {
+            if (!focused()) blackout(true);
+            return false;
+          }
+          const blob = await response.blob();
+          url = URL.createObjectURL(blob);
           const bitmap = await createImageBitmap(blob);
           if (!focused()) {
             bitmap.close();
             blackout(true);
-            return;
+            return false;
           }
           fit(bitmap);
           bitmap.close();
           waiting.hidden = true;
           currentId = id;
           shown.add(id);
+          return true;
         } finally {
-          URL.revokeObjectURL(url);
+          if (url) URL.revokeObjectURL(url);
           drawing = false;
         }
       }
 
-      function nextId() {
-        if (upcoming.length) return upcoming.shift().id;
-        if (!photos.length) return null;
-        const photo = photos[index % photos.length];
-        index += 1;
-        return photo.id;
+      function shuffleCopy(list) {
+        const copyList = list.slice();
+        for (let i = copyList.length - 1; i > 0; i -= 1) {
+          const j = Math.floor(Math.random() * (i + 1));
+          const swap = copyList[i];
+          copyList[i] = copyList[j];
+          copyList[j] = swap;
+        }
+        return copyList;
       }
 
       function schedule() {
         stopTimer();
-        timer = setTimeout(advance, displaySeconds * 1000);
+        if (paused) return;
+        timer = setTimeout(() => go(1), displaySeconds * 1000);
       }
 
-      async function advance() {
-        if (!focused()) return;
-        const id = nextId();
-        if (!id) {
-          currentId = null;
-          waiting.hidden = false;
-          clearFrame();
-          return;
-        }
-        await show(id);
-        if (focused()) schedule();
+      async function go(delta) {
+        if (!photos.length || !focused() || drawing) return;
+        if (position < 0) position = delta < 0 ? photos.length - 1 : 0;
+        else position = (position + delta + photos.length) % photos.length;
+        stopTimer();
+        const displayed = await show(photos[position].id);
+        if (displayed && focused() && !paused) schedule();
+      }
+
+      function rebuildOrder() {
+        photos = shuffle ? shuffleCopy(serverPhotos) : serverPhotos.slice();
+        position = currentId ? photos.findIndex((photo) => photo.id === currentId) : -1;
       }
 
       function merge(incoming) {
-        if (!haveCatalog) {
-          photos = incoming;
-          haveCatalog = true;
+        const previousIds = new Set(serverPhotos.map((photo) => photo.id));
+        const fresh = haveCatalog ? incoming.filter((photo) => !previousIds.has(photo.id) && !shown.has(photo.id)) : [];
+        serverPhotos = incoming;
+        haveCatalog = true;
+        if (shuffle) {
+          const present = new Set(incoming.map((photo) => photo.id));
+          photos = photos.filter((photo) => present.has(photo.id));
+          fresh.forEach((photo) => {
+            photos.splice(Math.floor(Math.random() * (photos.length + 1)), 0, photo);
+          });
+          position = currentId ? photos.findIndex((photo) => photo.id === currentId) : -1;
           return;
         }
-        const known = new Set(photos.map((photo) => photo.id).concat(upcoming.map((photo) => photo.id)));
-        incoming.forEach((photo) => {
-          if (!shown.has(photo.id) && !known.has(photo.id)) upcoming.push(photo);
-        });
-        photos = incoming;
+        const freshIds = new Set(fresh.map((photo) => photo.id));
+        const rest = incoming.filter((photo) => !freshIds.has(photo.id));
+        const at = rest.findIndex((photo) => photo.id === currentId);
+        photos = at >= 0 && fresh.length
+          ? rest.slice(0, at + 1).concat(fresh, rest.slice(at + 1))
+          : incoming.slice();
+        position = currentId ? photos.findIndex((photo) => photo.id === currentId) : -1;
+      }
+
+      function updateActive(data) {
+        const name = data.mode === "months"
+          ? (data.selected_months.join(", ") || text("months"))
+          : (data.folder || text("all"));
+        document.getElementById("mode-label").textContent = text("active") + ": " + name;
       }
 
       function renderControls(data) {
-        const key = JSON.stringify([data.albums, data.months, data.mode, data.folder, data.selected_months]);
-        document.getElementById("mode-label").textContent = data.mode === "months" ? "Active: Months" : "Active: Folder";
+        updateActive(data);
+        const key = JSON.stringify([data.albums, data.months, data.mode, data.folder, data.selected_months, lang]);
         if (key === controlKey) return;
         controlKey = key;
         const folder = document.getElementById("folder");
         folder.replaceChildren();
         const all = document.createElement("option");
         all.value = "";
-        all.textContent = "All";
+        all.textContent = text("all");
         all.selected = !data.folder;
         folder.appendChild(all);
         data.albums.forEach((album) => {
@@ -230,20 +356,43 @@
           option.selected = album.name === data.folder;
           folder.appendChild(option);
         });
-        const months = document.getElementById("months");
-        months.replaceChildren();
+        const checks = document.getElementById("month-checks");
+        const wasOpen = !checks.hidden;
+        checks.replaceChildren();
+        const selected = new Set(data.selected_months);
         data.months.forEach((entry) => {
           const label = document.createElement("label");
           const box = document.createElement("input");
           box.type = "checkbox";
           box.name = "months";
           box.value = entry.month;
-          box.checked = data.selected_months.indexOf(entry.month) !== -1;
+          box.checked = selected.has(entry.month);
           label.appendChild(box);
           label.appendChild(document.createTextNode(" " + entry.month + " — " + entry.count));
-          months.appendChild(label);
+          checks.appendChild(label);
         });
+        checks.hidden = !wasOpen;
+        monthPicker.setAttribute("aria-expanded", wasOpen ? "true" : "false");
+        const chosen = data.selected_months.join(", ");
+        monthPicker.textContent = chosen || text("addMonth");
         document.getElementById("seconds").value = String(data.display_seconds);
+      }
+
+      monthPicker.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const open = monthChecksHidden();
+        document.getElementById("month-checks").hidden = !open;
+        monthPicker.setAttribute("aria-expanded", open ? "true" : "false");
+      });
+      document.addEventListener("click", (event) => {
+        if (document.getElementById("month-menu").contains(event.target)) return;
+        document.getElementById("month-checks").hidden = true;
+        monthPicker.setAttribute("aria-expanded", "false");
+      });
+
+      function monthChecksHidden() {
+        return document.getElementById("month-checks").hidden;
       }
 
       async function refresh() {
@@ -253,40 +402,85 @@
           return;
         }
         const data = await response.json();
+        lastData = data;
         displaySeconds = data.display_seconds;
         problem.hidden = !data.sync_problem;
+        const nextSelection = JSON.stringify([data.mode, data.folder, data.selected_months]);
+        const selectionChanged = selection !== "" && nextSelection !== selection;
+        selection = nextSelection;
         merge(data.photos);
         renderControls(data);
+        if (selectionChanged) {
+          shown = new Set();
+          currentId = null;
+          position = -1;
+          stopTimer();
+          clearFrame();
+          rebuildOrder();
+          if (!photos.length) {
+            waiting.hidden = false;
+          } else if (focused()) {
+            go(1);
+          }
+          return;
+        }
         waiting.hidden = data.photos.length > 0 && (currentId !== null || drawing);
         if (!data.photos.length) {
-          upcoming = [];
           currentId = null;
+          position = -1;
           stopTimer();
           clearFrame();
           waiting.hidden = false;
-        } else if (focused() && !timer && !drawing && currentId === null) {
-          advance();
+        } else if (focused() && !paused && !timer && !drawing && currentId === null) {
+          go(1);
         }
       }
+
+      document.getElementById("previous").addEventListener("click", () => go(-1));
+      document.getElementById("next").addEventListener("click", () => go(1));
+      document.getElementById("pause").addEventListener("click", () => {
+        paused = !paused;
+        document.getElementById("pause").textContent = text(paused ? "play" : "pause");
+        if (paused) stopTimer();
+        else if (focused() && currentId) schedule();
+        else if (focused()) go(1);
+      });
+      document.getElementById("shuffle").addEventListener("click", () => {
+        shuffle = !shuffle;
+        const button = document.getElementById("shuffle");
+        button.setAttribute("aria-pressed", shuffle ? "true" : "false");
+        button.textContent = text(shuffle ? "shuffleOn" : "shuffleOff");
+        rebuildOrder();
+        if (!paused && focused() && currentId) schedule();
+      });
 
       document.querySelectorAll("#controls form[action='/view']").forEach((form) => {
         form.addEventListener("submit", async (event) => {
           event.preventDefault();
-          const response = await fetch(form.action, {
+          const response = await fetch(form.getAttribute("action"), {
             method: "POST", body: new FormData(form), credentials: "same-origin", redirect: "follow",
           });
-          if (response.status === 422) {
-            viewError.textContent = form.action.endsWith("/view") && form.querySelector("[name=action]").value === "seconds"
-              ? "Enter a positive whole number of seconds, such as 5."
-              : "That choice was not accepted.";
+          if (response.status === 401) {
+            location.assign("/");
             return;
           }
+          if (response.status === 422) {
+            const code = form.querySelector("[name=apply]").value === "seconds" ? "seconds" : "choice";
+            viewError.dataset.i18nError = code;
+            viewError.textContent = text(errorKey[code] || code);
+            return;
+          }
+          viewError.dataset.i18nError = "";
           viewError.textContent = "";
           controlKey = "";
           await refresh();
         });
       });
 
+      onLanguage = () => {
+        controlKey = "";
+        if (lastData) renderControls(lastData);
+      };
       if (!focused()) blackout(true);
       refresh();
       setInterval(refresh, 5000);

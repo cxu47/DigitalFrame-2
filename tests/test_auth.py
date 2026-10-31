@@ -30,16 +30,27 @@ users:
         load_users(_users(tmp_path, "users:\n  - {name: ada, passcode: 1234}\n"))
 
 
-def test_passcode_match_does_not_trim_or_accept_an_unknown_name(tmp_path):
+def test_only_the_passcode_is_checked_and_it_is_not_trimmed(tmp_path):
     users = load_users(_users(tmp_path, """
 users:
   - name: ada
     passcode: "correct-pass"
+  - name: blake
+    passcode: "other-pass"
 """))
-    assert authenticate(users, "ada", "correct-pass")
-    assert not authenticate(users, "ada", "correct-pass ")
-    assert not authenticate(users, "ada", "nope")
-    assert not authenticate(users, "missing", "correct-pass")
+    assert authenticate(users, "correct-pass").name == "ada"
+    assert authenticate(users, "other-pass").name == "blake"
+    assert authenticate(users, "correct-pass ") is None
+    assert authenticate(users, "nope") is None
+
+
+def test_duplicate_passcodes_are_rejected(tmp_path):
+    with pytest.raises(ValueError, match="same passcode"):
+        load_users(_users(tmp_path, """
+users:
+  - {name: ada, passcode: "same"}
+  - {name: blake, passcode: "same"}
+"""))
 
 
 def test_session_key_is_32_bytes_and_owner_readable(tmp_path):
