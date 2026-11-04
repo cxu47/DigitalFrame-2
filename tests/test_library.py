@@ -1,9 +1,13 @@
 """Catalog listing without a disk cache."""
 
+from io import BytesIO
 import threading
+
+from PIL import Image
 
 from digitalframe.auth import Session
 from digitalframe.library import Library
+from tests.fakes import heic_bytes, jpeg_bytes
 
 
 KEY = b"k" * 32
@@ -189,3 +193,54 @@ def test_the_queue_stops_at_the_newest_photos():
     library.catalog(session, KEY)
     library._queue.wait()
     assert sorted(calls) == ["photos/kids/3.jpg", "photos/kids/4.jpg"]
+
+
+def test_descale_shrinks_a_cached_photo_and_leaves_the_original_in_memory():
+    payload = jpeg_bytes(2000, 1000)
+    calls = []
+
+    def reader(_storage, key):
+        calls.append(key)
+        return payload
+
+    photos = [_photo("kids", "wide.jpg", "2026-09-03T00:00:00Z")]
+    library = _library(
+        [_album("kids", photos)], reader, max_width=1600, max_height=900, queue_workers=1)
+    session = Session("ada", 10**12, "folder", "kids", (), 5)
+    catalog = library.catalog(session, KEY)
+    library._queue.wait()
+    photo_id = catalog["photos"][0]["id"]
+    assert library.media(photo_id, KEY, session)[0] == payload
+    scaled = library.media(photo_id, KEY, session, descale=True)
+    with Image.open(BytesIO(scaled[0])) as image:
+        assert image.size == (1600, 800)
+    assert library.media(photo_id, KEY, session)[0] == payload
+    library.media(photo_id, KEY, session, descale=True)
+    assert len(calls) == 1
+
+
+def test_descale_shrinks_a_heic_photo_from_its_full_jpeg():
+    payload = heic_bytes(80, 40)
+    calls = []
+
+    def reader(_storage, key):
+        calls.append(key)
+        return payload
+
+    photos = [_photo("kids", "phone.heic", "2026-09-03T00:00:00Z")]
+    library = _library(
+        [_album("kids", photos)], reader, max_width=40, max_height=20,
+        jpeg_quality=75, queue_workers=1)
+    session = Session("ada", 10**12, "folder", "kids", (), 5)
+    catalog = library.catalog(session, KEY)
+    library._queue.wait()
+    photo_id = catalog["photos"][0]["id"]
+    full = library.media(photo_id, KEY, session)
+    assert full[1] == "image/jpeg"
+    with Image.open(BytesIO(full[0])) as image:
+        assert image.size == (80, 40)
+    scaled = library.media(photo_id, KEY, session, descale=True)
+    with Image.open(BytesIO(scaled[0])) as image:
+        assert image.format == "JPEG"
+        assert image.size == (40, 20)
+    assert len(calls) == 1

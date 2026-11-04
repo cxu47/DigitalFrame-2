@@ -53,6 +53,7 @@
       <button type="button" id="pause" data-i18n="pause">Pause</button>
       <button type="button" id="next" data-i18n="next">Next</button>
       <button type="button" id="shuffle" data-i18n="shuffleOff" aria-pressed="false">Shuffle: off</button>
+      <button type="button" id="descale" data-i18n="descaleOff" aria-pressed="false">Descale: off</button>
     </div>
     <div id="languages">
       <button type="button" data-lang="en" aria-pressed="true">English</button>
@@ -121,7 +122,7 @@
     function translate() {
       document.documentElement.lang = lang === "zh" ? "zh-Hans" : lang;
       document.querySelectorAll("[data-i18n]").forEach((element) => {
-        if (element.id === "pause" || element.id === "shuffle" || element.id === "month-picker") return;
+        if (element.id === "pause" || element.id === "shuffle" || element.id === "descale" || element.id === "month-picker") return;
         element.textContent = text(element.dataset.i18n);
       });
       document.querySelectorAll("[data-i18n-error]").forEach((element) => {
@@ -138,6 +139,10 @@
       const shuffleButton = document.getElementById("shuffle");
       if (shuffleButton && document.body.classList.contains("slideshow")) {
         shuffleButton.textContent = text(shuffle ? "shuffleOn" : "shuffleOff");
+      }
+      const descaleButton = document.getElementById("descale");
+      if (descaleButton && document.body.classList.contains("slideshow")) {
+        descaleButton.textContent = text(descale ? "descaleOn" : "descaleOff");
       }
       if (typeof onLanguage === "function") onLanguage();
     }
@@ -161,6 +166,7 @@
     const body = document.body;
     let paused = false;
     let shuffle = false;
+    let descale = false;
     let lastData = null;
     let onLanguage = null;
 
@@ -283,9 +289,14 @@
         return bitmap;
       }
 
+      function mediaPath(id) {
+        const path = "/media/" + encodeURIComponent(id);
+        return descale ? path + "?descale=1" : path;
+      }
+
       function loadEntry(id, epoch) {
         const entry = { id: id, blob: null, bitmap: null, promise: null, decoding: null, settled: false };
-        entry.promise = fetch("/media/" + encodeURIComponent(id), { credentials: "same-origin" })
+        entry.promise = fetch(mediaPath(id), { credentials: "same-origin" })
           .then((response) => {
             if (response.status === 401) {
               location.assign("/");
@@ -565,6 +576,15 @@
         rebuildOrder();
         fillQueue();
         if (!paused && focused() && currentId) schedule();
+      });
+      document.getElementById("descale").addEventListener("click", () => {
+        descale = !descale;
+        const button = document.getElementById("descale");
+        button.setAttribute("aria-pressed", descale ? "true" : "false");
+        button.textContent = text(descale ? "descaleOn" : "descaleOff");
+        dropQueue();
+        if (currentId && focused()) show(currentId);
+        else fillQueue();
       });
 
       document.querySelectorAll("#controls form[action='/view']").forEach((form) => {

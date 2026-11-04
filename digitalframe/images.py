@@ -30,6 +30,46 @@ def jpeg_from_heic(data, *, quality=75):
         return buffer.getvalue()
 
 
+def fit_bytes(data, *, max_width, max_height, quality, media_type):
+    """Shrink playback bytes so they fit inside the box.
+
+    Bytes that already fit are returned unchanged, including a full-size JPEG
+    made from a HEIC photo. Scaling does not enlarge a smaller photo.
+    """
+    with Image.open(BytesIO(data)) as image:
+        oriented = ImageOps.exif_transpose(image)
+        try:
+            if oriented.width <= max_width and oriented.height <= max_height:
+                return data, media_type
+            oriented.thumbnail((max_width, max_height), Image.Resampling.LANCZOS)
+            return _encode_memory(oriented, media_type, quality)
+        finally:
+            if oriented is not image:
+                oriented.close()
+
+
+def _encode_memory(image, media_type, quality):
+    buffer = BytesIO()
+    if media_type == "image/png":
+        image.save(buffer, format="PNG", optimize=True)
+        return buffer.getvalue(), media_type
+    if media_type == "image/webp":
+        output = image if image.mode in {"RGB", "RGBA"} else image.convert("RGB")
+        try:
+            output.save(buffer, format="WEBP", quality=quality, method=4)
+        finally:
+            if output is not image:
+                output.close()
+        return buffer.getvalue(), media_type
+    output = image if image.mode == "RGB" else image.convert("RGB")
+    try:
+        output.save(buffer, format="JPEG", quality=quality, optimize=True, progressive=True)
+    finally:
+        if output is not image:
+            output.close()
+    return buffer.getvalue(), "image/jpeg"
+
+
 def publish_derivative(
         source, destination, *, converted, max_width, max_height,
         other_quality, iphone_quality):

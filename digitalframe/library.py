@@ -7,7 +7,7 @@ from threading import Lock
 
 from .auth import open_seal, seal
 from .catalog import build_catalog, filter_photos, records_from_catalog, sort_photos
-from .images import jpeg_from_heic
+from .images import fit_bytes, jpeg_from_heic
 from .storage import list_albums, read_photo
 
 
@@ -125,11 +125,15 @@ class PhotoQueue:
 class Library:
     """One shared catalog. Each browser receives sealed ids, not object keys."""
 
-    def __init__(self, storage, *, interval, jpeg_quality=75, clock=None, lister=list_albums,
+    def __init__(self, storage, *, interval, jpeg_quality=75, other_quality=85,
+                 max_width=1600, max_height=900, clock=None, lister=list_albums,
                  reader=read_photo, queue_limit=QUEUE_LIMIT, queue_workers=QUEUE_WORKERS):
         self.storage = storage
         self.interval = interval
         self.jpeg_quality = jpeg_quality
+        self.other_quality = other_quality
+        self.max_width = max_width
+        self.max_height = max_height
         self._clock = clock or time.monotonic
         self._lister = lister
         self._reader = reader
@@ -140,6 +144,9 @@ class Library:
         self._albums = {}
         self._listed = None
         self._queue = PhotoQueue(queue_limit, queue_workers)
+        self._scaled_lock = Lock()
+        self._scaled_selection = None
+        self._scaled = {}
 
     def ensure(self):
         """List when the catalog is missing or stale. Wait if a list is running."""
@@ -176,16 +183,17 @@ class Library:
                        for record in selected],
         }
 
-    def media(self, token, key, session):
+    def media(self, token, key, session, descale=False):
         self.ensure()
         object_key = open_seal(key, token)
         if object_key is None or object_key not in self._names:
             return None
         self._warm(session)
         cached = self._queue.get(object_key)
-        if cached is not None:
-            return cached
-        return self._bytes_for(object_key)
+        played = cached if cached is not None else self._bytes_for(object_key)
+        if played is None or not descale:
+            return played
+        return self._descaled(session, object_key, played)
 
     def _selected(self, session, records=None):
         records = sort_photos(self._records if records is None else records)
@@ -196,7 +204,40 @@ class Library:
     def _warm(self, session, selected=None):
         if selected is None:
             selected = self._selected(session)
-        self._queue.prepare(_selection_key(session), [record.id for record in selected], self._bytes_for)
+        selection = _selection_key(session)
+        with self._scaled_lock:
+            if selection != self._scaled_selection:
+                self._scaled_selection = selection
+                self._scaled = {}
+        self._queue.prepare(selection, [record.id for record in selected], self._bytes_for)
+
+    def _descaled(self, session, object_key, played):
+        selection = _selection_key(session)
+        with self._scaled_lock:
+            if selection != self._scaled_selection:
+                self._scaled_selection = selection
+                self._scaled = {}
+            cached = self._scaled.get(object_key)
+        if cached is not None:
+            return cached
+        data, media_type = played
+        name = self._names.get(object_key, "")
+        suffix = "." + name.lower().rsplit(".", 1)[-1] if "." in name else ""
+        quality = self.jpeg_quality if suffix in {".heic", ".heif"} else self.other_quality
+        try:
+            scaled = fit_bytes(
+                data, max_width=self.max_width, max_height=self.max_height,
+                quality=quality, media_type=media_type)
+        except Exception:
+            logger.exception("Photo could not be descaled")
+            return played
+        with self._scaled_lock:
+            if selection != self._scaled_selection:
+                return scaled
+            if object_key not in self._scaled and len(self._scaled) >= self._queue.limit:
+                self._scaled.pop(next(iter(self._scaled)))
+            self._scaled[object_key] = scaled
+            return scaled
 
     def _bytes_for(self, object_key):
         name = self._names.get(object_key)

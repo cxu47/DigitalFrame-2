@@ -1,8 +1,10 @@
 """Image publication. Files stay on local disk; HEIC is produced in the test."""
 
+from io import BytesIO
+
 from PIL import Image
 
-from digitalframe.images import publish_derivative
+from digitalframe.images import fit_bytes, publish_derivative
 from tests.fakes import heic_bytes, jpeg_bytes, png_bytes
 
 
@@ -13,6 +15,23 @@ def _publish(source, destination, **overrides):
     )
     values.update(overrides)
     return publish_derivative(source, destination, **values)
+
+
+def test_fit_bytes_keeps_a_photo_that_is_already_inside_the_box():
+    original = jpeg_bytes(320, 180)
+    data, media_type = fit_bytes(
+        original, max_width=1600, max_height=900, quality=85, media_type="image/jpeg")
+    assert data == original
+    assert media_type == "image/jpeg"
+
+
+def test_fit_bytes_shrinks_a_wide_photo_without_stretching():
+    data, media_type = fit_bytes(
+        jpeg_bytes(2000, 1000), max_width=1600, max_height=900,
+        quality=85, media_type="image/jpeg")
+    assert media_type == "image/jpeg"
+    with Image.open(BytesIO(data)) as image:
+        assert image.size == (1600, 800)
 
 
 def test_a_jpeg_inside_the_limit_is_not_rewritten(tmp_path):

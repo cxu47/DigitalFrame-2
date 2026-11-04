@@ -124,6 +124,9 @@ def test_translations_come_from_a_dictionary_file(tmp_path):
     assert words["en"]["enter"] == "Enter"
     assert words["zh"]["enter"] == "进入"
     assert words["pl"]["enter"] == "Wejdź"
+    assert words["en"]["descaleOff"] == "Descale: off"
+    assert words["zh"]["descaleOff"] == "缩小：关"
+    assert words["pl"]["descaleOff"] == "Pomniejsz: wył."
     page = client.get("/").text
     assert 'data-i18n="enter"' in page
     assert "进入" not in page
@@ -139,6 +142,8 @@ def test_the_template_and_the_page_have_no_image_tag(tmp_path):
     assert 'id="next"' in text
     assert 'id="pause"' in text
     assert 'id="shuffle"' in text
+    assert 'id="descale"' in text
+    assert 'aria-pressed="false">Descale: off' in text
     assert 'id="month-picker"' in text
     assert 'id="month-checks"' in text
     assert 'data-lang="zh"' in text
@@ -259,3 +264,34 @@ def test_heic_is_converted_in_memory_and_not_stored(tmp_path):
     with Image.open(BytesIO(media.content)) as image:
         assert image.format == "JPEG"
     assert client.put_object.call_count == 0
+
+
+def test_descale_is_off_unless_the_request_asks_for_it(tmp_path):
+    from io import BytesIO
+    from PIL import Image
+
+    wide = jpeg_bytes(2000, 1000)
+    storage, client = _storage({
+        "photos/kids/wide.jpg": {
+            "body": wide, "etag": '"wide"',
+            "modified": datetime(2026, 9, 12, tzinfo=timezone.utc),
+        },
+    })
+    users_file = tmp_path / "users.yaml"
+    users_file.write_text(
+        "users:\n  - name: ada\n    passcode: \"correct-pass\"\n", encoding="utf-8")
+    settings = make_settings(tmp_path, cookie_secure=False)
+    library = Library(storage, interval=3600, jpeg_quality=75, max_width=1600, max_height=900)
+    app = create_app(
+        settings, library, load_users(users_file), Sessions(), LoginLimiter(),
+        ensure_session_key(tmp_path / "secrets" / "session.key"))
+    browser = TestClient(app)
+    _login(browser)
+    photo_id = browser.get("/catalog").json()["photos"][0]["id"]
+    original = browser.get(f"/media/{photo_id}")
+    untouched = browser.get(f"/media/{photo_id}?descale=0")
+    scaled = browser.get(f"/media/{photo_id}?descale=1")
+    assert original.content == untouched.content == wide
+    with Image.open(BytesIO(scaled.content)) as image:
+        assert image.size == (1600, 800)
+    assert client.get_object.call_count == 1

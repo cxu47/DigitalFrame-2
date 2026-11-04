@@ -87,11 +87,11 @@ def create_app(settings, library, users, sessions, limiter, session_key):
         return library.catalog(session, session_key)
 
     @app.get("/media/{token}")
-    def media(token: str, request: Request):
+    def media(token: str, request: Request, descale: str = ""):
         session, denial = require(request)
         if denial is not None:
             return denial
-        played = library.media(token, session_key, session)
+        played = library.media(token, session_key, session, descale=descale in {"1", "true", "on"})
         if played is None:
             return Response(status_code=404)
         body, media_type = played

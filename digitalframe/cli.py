@@ -57,7 +57,10 @@ def serve():
         logging.exception("OSS is not configured; the show will wait for photos")
     library = Library(
         storage, interval=settings.sync_interval,
-        jpeg_quality=settings.iphone_jpeg_quality)
+        jpeg_quality=settings.iphone_jpeg_quality,
+        other_quality=settings.other_image_quality,
+        max_width=settings.cache_max_width,
+        max_height=settings.cache_max_height)
     web = create_app(settings, library, users, Sessions(), LoginLimiter(), session_key)
     stop = Event()
 
