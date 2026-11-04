@@ -194,16 +194,14 @@
       const queueAhead = 4;
       const queueFetches = 2;
       let ready = new Map();
-      let frameWidth = 0;
-      let frameHeight = 0;
+      let shownBitmap = null;
 
       function focused() {
         return document.visibilityState === "visible" && document.hasFocus();
       }
 
       function clearFrame() {
-        frameWidth = 0;
-        frameHeight = 0;
+        shownBitmap = null;
         canvas.width = 1;
         canvas.height = 1;
         canvas.style.width = "0";
@@ -245,16 +243,36 @@
       document.addEventListener("visibilitychange", focusChanged);
       window.addEventListener("blur", focusChanged);
       window.addEventListener("focus", focusChanged);
-      window.addEventListener("resize", () => {
-        if (frameWidth && focused()) place();
-      });
+      window.addEventListener("resize", paint);
+      if (window.visualViewport) {
+        visualViewport.addEventListener("resize", paint);
+      }
 
-      function place() {
+      function screenScale() {
+        const viewport = window.visualViewport;
+        const pinch = viewport && viewport.scale > 0 ? viewport.scale : 1;
+        return (window.devicePixelRatio || 1) * pinch;
+      }
+
+      function paint() {
+        if (!shownBitmap || !focused()) return;
         const stageWidth = Math.max(1, stage.clientWidth);
         const stageHeight = Math.max(1, stage.clientHeight);
-        const scale = Math.min(stageWidth / frameWidth, stageHeight / frameHeight);
-        const drawnWidth = frameWidth * scale;
-        const drawnHeight = frameHeight * scale;
+        const fitScale = Math.min(stageWidth / shownBitmap.width, stageHeight / shownBitmap.height);
+        const drawnWidth = shownBitmap.width * fitScale;
+        const drawnHeight = shownBitmap.height * fitScale;
+        let bufferWidth = Math.max(1, Math.round(drawnWidth * screenScale()));
+        let bufferHeight = Math.max(1, Math.round(drawnHeight * screenScale()));
+        if (bufferWidth > shownBitmap.width || bufferHeight > shownBitmap.height) {
+          bufferWidth = shownBitmap.width;
+          bufferHeight = shownBitmap.height;
+        }
+        canvas.width = bufferWidth;
+        canvas.height = bufferHeight;
+        const context = canvas.getContext("2d");
+        context.imageSmoothingEnabled = true;
+        context.imageSmoothingQuality = "high";
+        context.drawImage(shownBitmap, 0, 0, bufferWidth, bufferHeight);
         canvas.style.width = drawnWidth + "px";
         canvas.style.height = drawnHeight + "px";
         canvas.style.left = ((stageWidth - drawnWidth) / 2) + "px";
@@ -262,16 +280,13 @@
       }
 
       function fit(bitmap) {
-        frameWidth = bitmap.width;
-        frameHeight = bitmap.height;
-        canvas.width = bitmap.width;
-        canvas.height = bitmap.height;
-        canvas.getContext("2d").drawImage(bitmap, 0, 0);
-        place();
+        shownBitmap = bitmap;
+        paint();
       }
 
       function dropQueue() {
         queueEpoch += 1;
+        shownBitmap = null;
         ready.forEach((entry) => {
           if (entry.bitmap) entry.bitmap.close();
         });
