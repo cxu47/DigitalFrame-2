@@ -21,8 +21,8 @@
     input, select, button { font: inherit; }
     .error { color: #f66; min-height: 1.2rem; }
     #stage { position: relative; z-index: 1; flex: 1; min-height: 0; background: #000; }
-    canvas, #shield { position: absolute; inset: 0; width: 100%; height: 100%; }
-    canvas { background: #000; }
+    #shield { position: absolute; inset: 0; }
+    canvas { position: absolute; left: 0; top: 0; width: 0; height: 0; background: #000; }
     #waiting, #problem { position: absolute; top: 1rem; left: 1rem; margin: 0; z-index: 1; }
     #problem { color: #f66; top: 3rem; }
     #veil { position: fixed; inset: 0; background: #000; z-index: 20; }
@@ -194,13 +194,20 @@
       const queueAhead = 4;
       const queueFetches = 2;
       let ready = new Map();
+      let frameWidth = 0;
+      let frameHeight = 0;
 
       function focused() {
         return document.visibilityState === "visible" && document.hasFocus();
       }
 
       function clearFrame() {
-        canvas.width = canvas.width;
+        frameWidth = 0;
+        frameHeight = 0;
+        canvas.width = 1;
+        canvas.height = 1;
+        canvas.style.width = "0";
+        canvas.style.height = "0";
       }
 
       function stopTimer() {
@@ -239,22 +246,28 @@
       window.addEventListener("blur", focusChanged);
       window.addEventListener("focus", focusChanged);
       window.addEventListener("resize", () => {
-        if (currentId && focused()) show(currentId);
+        if (frameWidth && focused()) place();
       });
 
+      function place() {
+        const stageWidth = Math.max(1, stage.clientWidth);
+        const stageHeight = Math.max(1, stage.clientHeight);
+        const scale = Math.min(stageWidth / frameWidth, stageHeight / frameHeight);
+        const drawnWidth = frameWidth * scale;
+        const drawnHeight = frameHeight * scale;
+        canvas.style.width = drawnWidth + "px";
+        canvas.style.height = drawnHeight + "px";
+        canvas.style.left = ((stageWidth - drawnWidth) / 2) + "px";
+        canvas.style.top = ((stageHeight - drawnHeight) / 2) + "px";
+      }
+
       function fit(bitmap) {
-        const width = Math.max(1, stage.clientWidth);
-        const height = Math.max(1, stage.clientHeight);
-        canvas.width = width;
-        canvas.height = height;
-        const scale = Math.min(width / bitmap.width, height / bitmap.height);
-        const drawnWidth = bitmap.width * scale;
-        const drawnHeight = bitmap.height * scale;
-        const context = canvas.getContext("2d");
-        context.fillStyle = "#000";
-        context.fillRect(0, 0, width, height);
-        context.drawImage(
-          bitmap, (width - drawnWidth) / 2, (height - drawnHeight) / 2, drawnWidth, drawnHeight);
+        frameWidth = bitmap.width;
+        frameHeight = bitmap.height;
+        canvas.width = bitmap.width;
+        canvas.height = bitmap.height;
+        canvas.getContext("2d").drawImage(bitmap, 0, 0);
+        place();
       }
 
       function dropQueue() {

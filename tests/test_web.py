@@ -143,6 +143,8 @@ def test_the_template_and_the_page_have_no_image_tag(tmp_path):
     assert 'id="pause"' in text
     assert 'id="shuffle"' in text
     assert 'id="descale"' in text
+    assert "canvas.width = bitmap.width" in text
+    assert "canvas.height = bitmap.height" in text
     assert 'aria-pressed="false">Descale: off' in text
     assert 'id="month-picker"' in text
     assert 'id="month-checks"' in text
