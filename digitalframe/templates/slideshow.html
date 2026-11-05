@@ -23,6 +23,15 @@
     #stage { position: relative; z-index: 1; flex: 1; min-height: 0; background: #000; }
     #shield { position: absolute; inset: 0; }
     canvas { position: absolute; left: 0; top: 0; width: 0; height: 0; background: #000; }
+    #stamp {
+      position: absolute; z-index: 3; margin: 0; pointer-events: none; white-space: nowrap;
+      color: #ffe14a; font-family: "Arial Narrow", "Arial", "Helvetica Neue", sans-serif;
+      font-weight: 700; letter-spacing: 0.06em; line-height: 1;
+      text-shadow:
+        -1px -1px 0 #000, 0 -1px 0 #000, 1px -1px 0 #000,
+        -1px 0 0 #000, 1px 0 0 #000,
+        -1px 1px 0 #000, 0 1px 0 #000, 1px 1px 0 #000;
+    }
     #waiting, #problem { position: absolute; top: 1rem; left: 1rem; margin: 0; z-index: 1; }
     #problem { color: #f66; top: 3rem; }
     #veil { position: fixed; inset: 0; background: #000; z-index: 20; }
@@ -41,7 +50,7 @@
       background: #161616; border: 1px solid #666; padding: 0.25rem 0.5rem;
     }
     #month-checks label { display: flex; align-items: center; gap: 0.45rem; min-height: 2.4rem; margin: 0; }
-    #stage, #shield, canvas {
+    #stage, #shield, canvas, #stamp {
       user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
     }
   </style>
@@ -72,6 +81,7 @@
 
   <div id="stage" {{APP_ATTR}}>
     <canvas id="frame" width="800" height="450"></canvas>
+    <p id="stamp" hidden></p>
     <div id="shield"></div>
     <p id="waiting" data-i18n="waiting">Waiting for photos</p>
     <p id="problem" data-i18n="problem" hidden>Cannot reach the photo library</p>
@@ -174,6 +184,7 @@
       const stage = document.getElementById("stage");
       const canvas = document.getElementById("frame");
       const shield = document.getElementById("shield");
+      const stamp = document.getElementById("stamp");
       const veil = document.getElementById("veil");
       const waiting = document.getElementById("waiting");
       const problem = document.getElementById("problem");
@@ -202,6 +213,8 @@
 
       function clearFrame() {
         shownBitmap = null;
+        stamp.hidden = true;
+        stamp.textContent = "";
         canvas.width = 1;
         canvas.height = 1;
         canvas.style.width = "0";
@@ -277,6 +290,40 @@
         canvas.style.height = drawnHeight + "px";
         canvas.style.left = ((stageWidth - drawnWidth) / 2) + "px";
         canvas.style.top = ((stageHeight - drawnHeight) / 2) + "px";
+        placeStamp();
+      }
+
+      function stampText(id) {
+        const entry = ready.get(id);
+        if (entry && entry.taken) return entry.taken;
+        const photo = photos.find((item) => item.id === id);
+        const match = photo && /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(photo.modified || "");
+        if (!match) return "";
+        return match[1] + "." + match[2] + "." + match[3] + " " + match[4] + ":" + match[5];
+      }
+
+      function placeStamp() {
+        const label = currentId ? stampText(currentId) : "";
+        if (!label || !shownBitmap) {
+          stamp.hidden = true;
+          return;
+        }
+        stamp.hidden = false;
+        stamp.textContent = label;
+        const drawnWidth = parseFloat(canvas.style.width);
+        const drawnHeight = parseFloat(canvas.style.height);
+        const originLeft = parseFloat(canvas.style.left);
+        const originTop = parseFloat(canvas.style.top);
+        const size = Math.max(15, Math.round(drawnWidth * 0.042));
+        stamp.style.fontSize = size + "px";
+        const pad = Math.max(8, Math.round(size * 0.65));
+        const width = stamp.offsetWidth;
+        const height = stamp.offsetHeight;
+        let left = originLeft + drawnWidth - width - pad;
+        const minLeft = originLeft + pad;
+        if (left < minLeft) left = minLeft;
+        stamp.style.left = left + "px";
+        stamp.style.top = (originTop + drawnHeight - height - pad) + "px";
       }
 
       function fit(bitmap) {
@@ -326,6 +373,8 @@
         const entry = { id: id, blob: null, bitmap: null, promise: null, decoding: null, settled: false };
         entry.promise = fetch(mediaPath(id), { credentials: "same-origin" })
           .then((response) => {
+            entry.taken = response.headers.get("X-Photo-Taken") || "";
+            if (entry.taken && currentId === id) placeStamp();
             if (response.status === 401) {
               location.assign("/");
               return null;
@@ -409,10 +458,10 @@
             if (!focused()) blackout(true);
             return false;
           }
-          fit(bitmap);
-          waiting.hidden = true;
           currentId = id;
           shown.add(id);
+          fit(bitmap);
+          waiting.hidden = true;
           fillQueue();
           return true;
         } finally {

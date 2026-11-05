@@ -7,7 +7,7 @@ from threading import Lock
 
 from .auth import open_seal, seal
 from .catalog import build_catalog, filter_photos, records_from_catalog, sort_photos
-from .images import fit_bytes, jpeg_from_heic
+from .images import fit_bytes, jpeg_from_heic, taken_stamp
 from .storage import list_albums, read_photo
 
 
@@ -147,6 +147,8 @@ class Library:
         self._scaled_lock = Lock()
         self._scaled_selection = None
         self._scaled = {}
+        self._taken_lock = Lock()
+        self._taken = {}
 
     def ensure(self):
         """List when the catalog is missing or stale. Wait if a list is running."""
@@ -191,9 +193,13 @@ class Library:
         self._warm(session)
         cached = self._queue.get(object_key)
         played = cached if cached is not None else self._bytes_for(object_key)
-        if played is None or not descale:
-            return played
-        return self._descaled(session, object_key, played)
+        if played is None:
+            return None
+        if descale:
+            played = self._descaled(session, object_key, played)
+        if played is None:
+            return None
+        return played[0], played[1], self._stamp(object_key)
 
     def _selected(self, session, records=None):
         records = sort_photos(self._records if records is None else records)
@@ -244,6 +250,7 @@ class Library:
         if name is None:
             return None
         data = self._reader(self.storage, object_key)
+        self._remember_taken(object_key, taken_stamp(data))
         suffix = "." + name.lower().rsplit(".", 1)[-1] if "." in name else ""
         if suffix in {".heic", ".heif"}:
             return jpeg_from_heic(data, quality=self.jpeg_quality), "image/jpeg"
@@ -251,6 +258,14 @@ class Library:
         if media_type is None:
             return None
         return data, media_type
+
+    def _remember_taken(self, object_key, stamp):
+        with self._taken_lock:
+            self._taken[object_key] = stamp
+
+    def _stamp(self, object_key):
+        with self._taken_lock:
+            return self._taken.get(object_key)
 
     def _replace(self, albums):
         catalog = build_catalog(albums, "original")

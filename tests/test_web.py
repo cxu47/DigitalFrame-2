@@ -148,6 +148,8 @@ def test_the_template_and_the_page_have_no_image_tag(tmp_path):
     assert "devicePixelRatio" in text
     assert "visualViewport" in text
     assert "contextmenu" in text
+    assert 'id="stamp"' in text
+    assert "#ffe14a" in text
     assert 'aria-pressed="false">Descale: off' in text
     assert 'id="month-picker"' in text
     assert 'id="month-checks"' in text
@@ -300,3 +302,34 @@ def test_descale_is_off_unless_the_request_asks_for_it(tmp_path):
     with Image.open(BytesIO(scaled.content)) as image:
         assert image.size == (1600, 800)
     assert client.get_object.call_count == 1
+
+
+def test_the_camera_time_is_sent_with_the_photo(tmp_path):
+    from io import BytesIO
+    from PIL import ExifTags, Image
+
+    image = Image.new("RGB", (24, 16), (3, 4, 5))
+    exif = Image.Exif()
+    exif.get_ifd(ExifTags.IFD.Exif)[ExifTags.Base.DateTimeOriginal] = "2024:09:12 14:30:45"
+    buffer = BytesIO()
+    image.save(buffer, format="JPEG", exif=exif)
+    storage, _client = _storage({
+        "photos/kids/stamp.jpg": {
+            "body": buffer.getvalue(), "etag": '"stamp"',
+            "modified": datetime(2026, 9, 12, tzinfo=timezone.utc),
+        },
+    })
+    users_file = tmp_path / "users.yaml"
+    users_file.write_text(
+        "users:\n  - name: ada\n    passcode: \"correct-pass\"\n", encoding="utf-8")
+    settings = make_settings(tmp_path, cookie_secure=False)
+    library = Library(storage, interval=3600, jpeg_quality=75)
+    app = create_app(
+        settings, library, load_users(users_file), Sessions(), LoginLimiter(),
+        ensure_session_key(tmp_path / "secrets" / "session.key"))
+    browser = TestClient(app)
+    _login(browser)
+    photo_id = browser.get("/catalog").json()["photos"][0]["id"]
+    media = browser.get(f"/media/{photo_id}")
+    assert media.status_code == 200
+    assert media.headers["x-photo-taken"] == "2024.09.12 14:30"

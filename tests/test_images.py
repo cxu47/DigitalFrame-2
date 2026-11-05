@@ -2,9 +2,9 @@
 
 from io import BytesIO
 
-from PIL import Image
+from PIL import ExifTags, Image
 
-from digitalframe.images import fit_bytes, publish_derivative
+from digitalframe.images import fit_bytes, publish_derivative, taken_stamp
 from tests.fakes import heic_bytes, jpeg_bytes, png_bytes
 
 
@@ -15,6 +15,21 @@ def _publish(source, destination, **overrides):
     )
     values.update(overrides)
     return publish_derivative(source, destination, **values)
+
+
+def _jpeg_taken_at(when):
+    image = Image.new("RGB", (16, 10), (8, 9, 10))
+    exif = Image.Exif()
+    exif.get_ifd(ExifTags.IFD.Exif)[ExifTags.Base.DateTimeOriginal] = when
+    buffer = BytesIO()
+    image.save(buffer, format="JPEG", exif=exif)
+    return buffer.getvalue()
+
+
+def test_taken_stamp_reads_the_camera_clock():
+    assert taken_stamp(_jpeg_taken_at("2024:09:12 14:30:45")) == "2024.09.12 14:30"
+    assert taken_stamp(jpeg_bytes(20, 10)) is None
+    assert taken_stamp(b"not-a-photo") is None
 
 
 def test_fit_bytes_keeps_a_photo_that_is_already_inside_the_box():

@@ -94,8 +94,11 @@ def create_app(settings, library, users, sessions, limiter, session_key):
         played = library.media(token, session_key, session, descale=descale in {"1", "true", "on"})
         if played is None:
             return Response(status_code=404)
-        body, media_type = played
-        return Response(body, media_type=media_type, headers=MEDIA_HEADERS)
+        body, media_type, taken = played
+        headers = dict(MEDIA_HEADERS)
+        if taken:
+            headers["X-Photo-Taken"] = taken
+        return Response(body, media_type=media_type, headers=headers)
 
     @app.post("/reset")
     def reset(request: Request):

@@ -134,7 +134,7 @@ def test_the_current_queue_is_read_concurrently_and_then_from_memory():
     library._queue.wait()
     assert len(calls) == 3
     played = library.media(catalog["photos"][0]["id"], KEY, session)
-    assert played == (b"pic", "image/jpeg")
+    assert played[:2] == (b"pic", "image/jpeg")
     assert len(calls) == 3
 
 

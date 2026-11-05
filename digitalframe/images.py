@@ -5,6 +5,7 @@ orientation or the size bound requires it. A file already inside the limit
 keeps its original bytes.
 """
 
+from datetime import datetime
 from io import BytesIO
 
 from PIL import ExifTags, Image, ImageOps
@@ -28,6 +29,46 @@ def jpeg_from_heic(data, *, quality=75):
             if oriented is not image:
                 oriented.close()
         return buffer.getvalue()
+
+
+def taken_stamp(data):
+    """Return the camera's capture time as ``YYYY.MM.DD HH:MM``.
+
+    The value is the clock stored in the photo. Files without that clock return None.
+    """
+    if not isinstance(data, (bytes, bytearray)):
+        return None
+    try:
+        with Image.open(BytesIO(data)) as image:
+            raw = _exif_taken(image)
+    except Exception:
+        return None
+    return _format_exif_time(raw)
+
+
+def _exif_taken(image):
+    exif = image.getexif()
+    if not exif:
+        return None
+    ifd = exif.get_ifd(ExifTags.IFD.Exif)
+    for tag in (ExifTags.Base.DateTimeOriginal, ExifTags.Base.DateTimeDigitized):
+        value = ifd.get(tag)
+        if isinstance(value, str) and value.strip():
+            return value
+    value = exif.get(ExifTags.Base.DateTime)
+    if isinstance(value, str) and value.strip():
+        return value
+    return None
+
+
+def _format_exif_time(raw):
+    if not isinstance(raw, str):
+        return None
+    try:
+        parsed = datetime.strptime(raw.strip(), "%Y:%m:%d %H:%M:%S")
+    except ValueError:
+        return None
+    return parsed.strftime("%Y.%m.%d %H:%M")
 
 
 def fit_bytes(data, *, max_width, max_height, quality, media_type):
