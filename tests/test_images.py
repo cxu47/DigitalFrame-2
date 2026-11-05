@@ -26,10 +26,28 @@ def _jpeg_taken_at(when):
     return buffer.getvalue()
 
 
-def test_taken_stamp_reads_the_camera_clock():
+def _jpeg_with_clocks(*, taken="", digitized="", modified=""):
+    image = Image.new("RGB", (16, 10), (8, 9, 10))
+    exif = Image.Exif()
+    if modified:
+        exif[ExifTags.Base.DateTime] = modified
+    ifd = exif.get_ifd(ExifTags.IFD.Exif)
+    if taken:
+        ifd[ExifTags.Base.DateTimeOriginal] = taken
+    if digitized:
+        ifd[ExifTags.Base.DateTimeDigitized] = digitized
+    buffer = BytesIO()
+    image.save(buffer, format="JPEG", exif=exif)
+    return buffer.getvalue()
+
+
+def test_taken_stamp_reads_only_the_date_taken_field():
     assert taken_stamp(_jpeg_taken_at("2024:09:12 14:30:45")) == "2024.09.12 14:30"
     assert taken_stamp(jpeg_bytes(20, 10)) is None
     assert taken_stamp(b"not-a-photo") is None
+    created_and_modified = _jpeg_with_clocks(
+        digitized="2021:02:03 04:05:06", modified="2020:01:01 01:02:03")
+    assert taken_stamp(created_and_modified) is None
 
 
 def test_fit_bytes_keeps_a_photo_that_is_already_inside_the_box():

@@ -32,30 +32,25 @@ def jpeg_from_heic(data, *, quality=75):
 
 
 def taken_stamp(data):
-    """Return the camera's capture time as ``YYYY.MM.DD HH:MM``.
+    """Return Date Taken as ``YYYY.MM.DD HH:MM``, or None when that field is absent.
 
-    The value is the clock stored in the photo. Files without that clock return None.
+    Only the camera Date Taken field is read. Date created and date modified are ignored.
     """
     if not isinstance(data, (bytes, bytearray)):
         return None
     try:
         with Image.open(BytesIO(data)) as image:
-            raw = _exif_taken(image)
+            raw = _date_taken(image)
     except Exception:
         return None
     return _format_exif_time(raw)
 
 
-def _exif_taken(image):
+def _date_taken(image):
     exif = image.getexif()
     if not exif:
         return None
-    ifd = exif.get_ifd(ExifTags.IFD.Exif)
-    for tag in (ExifTags.Base.DateTimeOriginal, ExifTags.Base.DateTimeDigitized):
-        value = ifd.get(tag)
-        if isinstance(value, str) and value.strip():
-            return value
-    value = exif.get(ExifTags.Base.DateTime)
+    value = exif.get_ifd(ExifTags.IFD.Exif).get(ExifTags.Base.DateTimeOriginal)
     if isinstance(value, str) and value.strip():
         return value
     return None
